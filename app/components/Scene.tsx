@@ -5,86 +5,91 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+// Define camera positions with more extreme differences
+const VIEWS = {
+  view1: {
+    position: new THREE.Vector3(2, 0, 0),
+    target: new THREE.Vector3(0, 0, 0),
+  },
+  view2: {
+    position: new THREE.Vector3(0, 2, 2),
+    target: new THREE.Vector3(0, 0, 0),
+  },
+};
+
 export default function Scene() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Add refs for animation
+  const targetPositionRef = useRef(new THREE.Vector3(2, 0, 0));
+  const isAnimatingRef = useRef(false);
+
+  const moveToView = (view: keyof typeof VIEWS) => {
+    if (!cameraRef.current || !controlsRef.current) return;
+
+    const targetView = VIEWS[view];
+    targetPositionRef.current.copy(targetView.position);
+    isAnimatingRef.current = true;
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Scene setup
     const scene = new THREE.Scene();
+    sceneRef.current = scene;
     scene.background = new THREE.Color(0x000000);
 
-    // Use a wider FOV for more immersive feel
     const camera = new THREE.PerspectiveCamera(
-      90,
+      60,
       window.innerWidth / window.innerHeight,
       0.1,
       1000
     );
+    camera.position.copy(VIEWS.view1.position);
+    cameraRef.current = camera;
+
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
-      alpha: true,
     });
 
-    renderer.setClearColor(0x000000, 1);
     renderer.setSize(window.innerWidth, window.innerHeight);
     containerRef.current.appendChild(renderer.domElement);
 
-    // Add controls with adjusted settings for immersive view
     const controls = new OrbitControls(camera, renderer.domElement);
+    controlsRef.current = controls;
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.2; // Slower rotation for more natural feel
-    controls.maxDistance = 0.1; // Limit how far you can zoom out
-    controls.minDistance = 0.01; // Limit how close you can zoom in
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.enableRotate = false;
+    controls.target.copy(VIEWS.view1.target);
+    controls.update();
 
-    // Enhanced lighting setup for atmospheric effect
-    const ambientLight = new THREE.AmbientLight(0x0066ff, 0.2); // Blue tint
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
 
-    // Add multiple point lights for better depth
-    const createPointLight = (
-      x: number,
-      y: number,
-      z: number,
-      intensity: number,
-      color: number
-    ) => {
-      const light = new THREE.PointLight(color, intensity);
-      light.position.set(x, y, z);
-      return light;
-    };
+    const pointLight = new THREE.PointLight(0xffffff, 1);
+    pointLight.position.set(10, 10, 10);
+    scene.add(pointLight);
 
-    scene.add(createPointLight(1, 1, 1, 0.5, 0x0066ff)); // Blue
-    scene.add(createPointLight(-1, -1, -1, 0.3, 0xffffff)); // White
-    scene.add(createPointLight(0, 1, 0, 0.4, 0x00ffff)); // Cyan
-
-    // Load GLTF model
     const loader = new GLTFLoader();
     loader.load(
       "/3d/brain/scene.gltf",
       (gltf) => {
         const model = gltf.scene;
-
-        // Scale up the model significantly to be "inside" it
         const scale = 15;
         model.scale.setScalar(scale);
 
-        // Center the model around camera
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         model.position.sub(center);
 
         scene.add(model);
-
-        // Position camera inside the model
-        camera.position.set(0, 0, 0.05);
-        controls.target.set(0, 0, 0);
-
         setLoading(false);
       },
       (progress) => {
@@ -101,17 +106,28 @@ export default function Scene() {
       }
     );
 
-    // Animation
+    // Animation loop with lerp
     const animate = () => {
       requestAnimationFrame(animate);
+
+      if (isAnimatingRef.current && camera) {
+        // Interpolate camera position
+        camera.position.lerp(targetPositionRef.current, 0.02);
+
+        // Check if we're close enough to stop animating
+        if (camera.position.distanceTo(targetPositionRef.current) < 0.01) {
+          isAnimatingRef.current = false;
+        }
+      }
+
       controls.update();
       renderer.render(scene, camera);
     };
 
     animate();
 
-    // Handle resize
     const handleResize = () => {
+      if (!camera || !renderer) return;
       const width = window.innerWidth;
       const height = window.innerHeight;
       camera.aspect = width / height;
@@ -121,31 +137,45 @@ export default function Scene() {
 
     window.addEventListener("resize", handleResize);
 
-    // Cleanup
     return () => {
       window.removeEventListener("resize", handleResize);
-      containerRef.current?.removeChild(renderer.domElement);
+      if (containerRef.current) {
+        containerRef.current.removeChild(renderer.domElement);
+      }
       renderer.dispose();
     };
   }, []);
 
   return (
-    <>
+    <div className="relative w-screen h-screen">
       <div
         ref={containerRef}
-        className="fixed top-0 left-0 w-screen h-screen -z-10 overflow-hidden bg-black"
-        style={{ pointerEvents: "auto" }}
+        className="absolute top-0 left-0 w-full h-full -z-10 overflow-hidden bg-black"
       />
+      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex gap-4 z-50">
+        <button
+          onClick={() => moveToView("view1")}
+          className="px-6 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 text-white rounded-full transition-all cursor-pointer"
+        >
+          View 1
+        </button>
+        <button
+          onClick={() => moveToView("view2")}
+          className="px-6 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 text-white rounded-full transition-all cursor-pointer"
+        >
+          View 2
+        </button>
+      </div>
       {loading && (
-        <div className="fixed top-0 left-0 w-screen h-screen flex items-center justify-center text-white">
+        <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center text-white z-50">
           Loading model...
         </div>
       )}
       {error && (
-        <div className="fixed top-0 left-0 w-screen h-screen flex items-center justify-center text-red-500">
+        <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center text-red-500 z-50">
           {error}
         </div>
       )}
-    </>
+    </div>
   );
 }
