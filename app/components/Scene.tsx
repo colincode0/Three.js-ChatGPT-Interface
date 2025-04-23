@@ -11,10 +11,18 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+// Pre-create reusable vectors and objects to avoid garbage collection
+const HALF_PI = Math.PI / 2;
+const TEMP_VECTOR2 = new THREE.Vector2();
+const TEMP_SPHERICAL = new THREE.Spherical();
+
 // Function to generate random position near current position
-const getRandomPosition = (currentPosition: THREE.Vector3) => {
+const getRandomPosition = (
+  currentPosition: THREE.Vector3,
+  out: THREE.Vector3
+) => {
   // Maximum angle change (in radians) per click
-  const maxAngleChange = Math.PI / 4; // 45 degrees
+  const maxAngleChange = HALF_PI / 2; // 45 degrees
   // Maximum distance to move from current position
   const maxDistance = 0.8;
 
@@ -23,23 +31,21 @@ const getRandomPosition = (currentPosition: THREE.Vector3) => {
   const distanceOffset = Math.random() * maxDistance;
 
   // Convert current position to spherical coordinates
-  const currentSpherical = new THREE.Spherical().setFromVector3(
-    currentPosition
-  );
+  TEMP_SPHERICAL.setFromVector3(currentPosition);
 
   // Apply constrained random changes to spherical coordinates
-  currentSpherical.phi = Math.max(
+  TEMP_SPHERICAL.phi = Math.max(
     0.1,
-    Math.min(Math.PI - 0.1, currentSpherical.phi + angleOffset)
+    Math.min(Math.PI - 0.1, TEMP_SPHERICAL.phi + angleOffset)
   );
-  currentSpherical.theta += (Math.random() * 2 - 1) * maxAngleChange;
-  currentSpherical.radius = Math.max(
+  TEMP_SPHERICAL.theta += (Math.random() * 2 - 1) * maxAngleChange;
+  TEMP_SPHERICAL.radius = Math.max(
     1,
-    Math.min(2, currentSpherical.radius + distanceOffset)
+    Math.min(2, TEMP_SPHERICAL.radius + distanceOffset)
   );
 
-  // Convert back to Cartesian coordinates
-  return new THREE.Vector3().setFromSpherical(currentSpherical);
+  // Convert back to Cartesian coordinates using the provided output vector
+  return out.setFromSpherical(TEMP_SPHERICAL);
 };
 
 export default function Scene() {
@@ -65,7 +71,6 @@ export default function Scene() {
   const isAnimatingRef = useRef(false);
   const driftStartTimeRef = useRef(0);
   const isDriftingRef = useRef(false);
-  const lastTimeRef = useRef(0);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -239,22 +244,36 @@ export default function Scene() {
       }
     );
 
-    // Optimized animation loop
+    // Optimized animation loop with time smoothing
+    let lastFrameTime = 0;
+    const frameTimeBuffer: number[] = new Array(10).fill(16.67); // Buffer for frame time averaging
+    let frameTimeIndex = 0;
+
     const animate = (currentTime: number) => {
       requestAnimationFrame(animate);
 
-      const deltaTime = Math.min(currentTime - lastTimeRef.current, 32); // Cap at ~30fps
-      lastTimeRef.current = currentTime;
+      // Smooth frame time calculation
+      const rawDeltaTime = currentTime - lastFrameTime;
+      lastFrameTime = currentTime;
+
+      frameTimeBuffer[frameTimeIndex] = rawDeltaTime;
+      frameTimeIndex = (frameTimeIndex + 1) % frameTimeBuffer.length;
+
+      // Calculate average frame time
+      const avgDeltaTime = Math.min(
+        frameTimeBuffer.reduce((a, b) => a + b) / frameTimeBuffer.length,
+        32 // Cap at ~30fps
+      );
 
       if (isAnimatingRef.current && camera) {
-        animationProgressRef.current += 0.006 * (deltaTime / 16.67);
+        animationProgressRef.current += 0.006 * (avgDeltaTime / 16.67);
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
           // Start drift after 1.5 second delay
           setTimeout(() => {
             isDriftingRef.current = true;
-            driftStartTimeRef.current = Date.now();
+            driftStartTimeRef.current = performance.now();
             // Start with zero velocity and gradually increase
             driftVelocityRef.current.set(0, 0, 0);
           }, 1500);
@@ -299,13 +318,12 @@ export default function Scene() {
       }
 
       if (isDriftingRef.current && camera) {
-        // Calculate time since drift started (in seconds)
-        const driftTime = (Date.now() - driftStartTimeRef.current) / 1000;
-        // Ease in the drift over 0.5 seconds
+        // Use performance.now() for more precise timing
+        const driftTime =
+          (performance.now() - driftStartTimeRef.current) / 1000;
         const driftProgress = Math.min(driftTime / 0.5, 1);
-        const easeInDrift = driftProgress * driftProgress; // Quadratic ease-in
+        const easeInDrift = driftProgress * driftProgress;
 
-        // Interpolate current velocity towards target velocity
         driftVelocityRef.current.lerp(
           targetDriftVelocityRef.current,
           easeInDrift
@@ -328,18 +346,25 @@ export default function Scene() {
 
     animate(0);
 
-    // Optimized resize handler
+    // Optimized resize handler with debounce
+    let resizeTimeout: NodeJS.Timeout;
     const handleResize = () => {
-      if (!camera || !renderer || !composer) return;
+      if (resizeTimeout) clearTimeout(resizeTimeout);
 
-      const width = window.innerWidth;
-      const height = window.innerHeight;
+      resizeTimeout = setTimeout(() => {
+        if (!camera || !renderer || !composer) return;
 
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
+        const width = window.innerWidth;
+        const height = window.innerHeight;
 
-      renderer.setSize(width, height);
-      composer.setSize(width, height);
+        TEMP_VECTOR2.set(width / 2, height / 2);
+
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+
+        renderer.setSize(width, height);
+        composer.setSize(width, height);
+      }, 250); // Debounce resize events
     };
 
     window.addEventListener("resize", handleResize);
@@ -382,7 +407,10 @@ export default function Scene() {
               return;
 
             startPositionRef.current.copy(cameraRef.current.position);
-            tempVector.current = getRandomPosition(cameraRef.current.position);
+            tempVector.current = getRandomPosition(
+              cameraRef.current.position,
+              tempVector.current
+            );
             targetPositionRef.current.copy(tempVector.current);
 
             const moveDirection = tempVector.current
