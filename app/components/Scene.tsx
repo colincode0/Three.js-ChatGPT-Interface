@@ -119,9 +119,20 @@ export default function Scene() {
     const ambientLight = new THREE.AmbientLight(0x111111, 0.4);
     scene.add(ambientLight);
 
-    const mainLight = new THREE.PointLight(0xc4d1ff, 22.0); // Blueish white light
-    mainLight.position.set(8, 4, 8);
-    scene.add(mainLight);
+    // Blue-tinted main light
+    const blueLight = new THREE.PointLight(0xc4d1ff, 15.0);
+    blueLight.position.set(8, 4, 8);
+    scene.add(blueLight);
+
+    // White fill light from opposite direction
+    const whiteLight = new THREE.PointLight(0xffffff, 12.0);
+    whiteLight.position.set(-6, 2, -6);
+    scene.add(whiteLight);
+
+    // Additional rim light
+    const rimLight = new THREE.PointLight(0xffffff, 8.0);
+    rimLight.position.set(0, 10, -10);
+    scene.add(rimLight);
 
     // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -160,8 +171,8 @@ export default function Scene() {
         outlinePass.edgeGlow = 0.8;
         outlinePass.edgeThickness = 2.0;
         outlinePass.pulsePeriod = 0;
-        outlinePass.visibleEdgeColor.set(0xffffff); // White outline
-        outlinePass.hiddenEdgeColor.set(0xffffff); // White for hidden edges
+        outlinePass.visibleEdgeColor.set(0x0033cc); // Dark blue outline
+        outlinePass.hiddenEdgeColor.set(0x0033cc); // Dark blue for hidden edges
 
         outlinePass.selectedObjects = [model];
         composer.addPass(outlinePass);
@@ -172,9 +183,38 @@ export default function Scene() {
         vignettePass.uniforms["darkness"].value = 1.6;
         composer.addPass(vignettePass);
 
-        // Add afterimage effect
-        const afterimagePass = new AfterimagePass(0.85); // Reduced from 0.96 to 0.85 for more subtle effect
+        // Add subtle afterimage effect
+        const afterimagePass = new AfterimagePass(0.75);
         composer.addPass(afterimagePass);
+
+        // Add chromatic aberration
+        const chromaticAberrationPass = new ShaderPass({
+          uniforms: {
+            tDiffuse: { value: null },
+            rOffset: { value: new THREE.Vector2(-0.002, 0) },
+            bOffset: { value: new THREE.Vector2(0.002, 0) },
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D tDiffuse;
+            uniform vec2 rOffset;
+            uniform vec2 bOffset;
+            varying vec2 vUv;
+            void main() {
+              vec4 cr = texture2D(tDiffuse, vUv + rOffset);
+              vec4 cg = texture2D(tDiffuse, vUv);
+              vec4 cb = texture2D(tDiffuse, vUv + bOffset);
+              gl_FragColor = vec4(cr.r, cg.g, cb.b, cg.a);
+            }
+          `,
+        });
+        composer.addPass(chromaticAberrationPass);
       },
       undefined,
       (error) => {
