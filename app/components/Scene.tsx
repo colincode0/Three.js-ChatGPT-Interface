@@ -192,6 +192,7 @@ export default function Scene() {
           uniforms: {
             tDiffuse: { value: null },
             rOffset: { value: new THREE.Vector2(-0.005, 0) },
+            gOffset: { value: new THREE.Vector2(0.0, 0) },
             bOffset: { value: new THREE.Vector2(0.005, 0) },
             opacity: { value: 0.0 }, // Start with no effect
           },
@@ -205,16 +206,25 @@ export default function Scene() {
           fragmentShader: `
             uniform sampler2D tDiffuse;
             uniform vec2 rOffset;
+            uniform vec2 gOffset;
             uniform vec2 bOffset;
             uniform float opacity;
             varying vec2 vUv;
             void main() {
               vec4 cr = texture2D(tDiffuse, vUv + rOffset);
-              vec4 cg = texture2D(tDiffuse, vUv);
+              vec4 cg = texture2D(tDiffuse, vUv + gOffset);
               vec4 cb = texture2D(tDiffuse, vUv + bOffset);
               
-              vec4 chromatic = vec4(cr.r, cg.g, cb.b, cg.a);
-              gl_FragColor = mix(cg, chromatic, opacity);
+              // Create cyan, green, and blue separation
+              vec4 chromatic = vec4(
+                cr.g * 0.5 + cr.b,  // Cyan (half G + B)
+                cg.g,               // Green
+                cb.b,               // Blue
+                cg.a
+              );
+              
+              // Mix with reduced opacity
+              gl_FragColor = mix(cg, chromatic, opacity * 0.7);
             }
           `,
         });
