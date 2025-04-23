@@ -9,7 +9,6 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
-import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 // Function to generate random position near current position
@@ -51,6 +50,7 @@ export default function Scene() {
   const targetDriftVelocityRef = useRef(new THREE.Vector3());
   const idealPosition = useRef(new THREE.Vector3());
   const tempVector = useRef(new THREE.Vector3());
+  const chromaticPassRef = useRef<ShaderPass | null>(null);
 
   // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -111,26 +111,30 @@ export default function Scene() {
       0.85
     );
     bloomPass.threshold = 0.2;
-    bloomPass.strength = 0.6;
-    bloomPass.radius = 0.5;
+    bloomPass.strength = 1.2;
+    bloomPass.radius = 0.75;
     composer.addPass(bloomPass);
 
     // Lighting
     const ambientLight = new THREE.AmbientLight(0x111111, 0.4);
     scene.add(ambientLight);
 
-    // Blue-tinted main light
-    const blueLight = new THREE.PointLight(0xc4d1ff, 15.0);
-    blueLight.position.set(8, 4, 8);
-    scene.add(blueLight);
+    // White ambient fill light
+    const whiteAmbient = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(whiteAmbient);
 
-    // White fill light from opposite direction
-    const whiteLight = new THREE.PointLight(0xffffff, 12.0);
-    whiteLight.position.set(-6, 2, -6);
-    scene.add(whiteLight);
+    // Main light
+    const mainLight = new THREE.PointLight(0x808080, 15.0); // Grey light
+    mainLight.position.set(8, 4, 8);
+    scene.add(mainLight);
 
-    // Additional rim light
-    const rimLight = new THREE.PointLight(0xffffff, 8.0);
+    // Fill light
+    const fillLight = new THREE.PointLight(0x808080, 12.0); // Grey light
+    fillLight.position.set(-6, 2, -6);
+    scene.add(fillLight);
+
+    // Rim light
+    const rimLight = new THREE.PointLight(0x808080, 8.0); // Grey light
     rimLight.position.set(0, 10, -10);
     scene.add(rimLight);
 
@@ -168,11 +172,11 @@ export default function Scene() {
         );
 
         outlinePass.edgeStrength = 3.0;
-        outlinePass.edgeGlow = 0.8;
+        outlinePass.edgeGlow = 1.5;
         outlinePass.edgeThickness = 2.0;
         outlinePass.pulsePeriod = 0;
-        outlinePass.visibleEdgeColor.set(0x0033cc); // Dark blue outline
-        outlinePass.hiddenEdgeColor.set(0x0033cc); // Dark blue for hidden edges
+        outlinePass.visibleEdgeColor.set(0xffffff); // White outline
+        outlinePass.hiddenEdgeColor.set(0xffffff); // White for hidden edges
 
         outlinePass.selectedObjects = [model];
         composer.addPass(outlinePass);
@@ -183,16 +187,13 @@ export default function Scene() {
         vignettePass.uniforms["darkness"].value = 1.6;
         composer.addPass(vignettePass);
 
-        // Add subtle afterimage effect
-        const afterimagePass = new AfterimagePass(0.75);
-        composer.addPass(afterimagePass);
-
-        // Add chromatic aberration
+        // Add chromatic aberration with movement-based opacity
         const chromaticAberrationPass = new ShaderPass({
           uniforms: {
             tDiffuse: { value: null },
-            rOffset: { value: new THREE.Vector2(-0.002, 0) },
-            bOffset: { value: new THREE.Vector2(0.002, 0) },
+            rOffset: { value: new THREE.Vector2(-0.005, 0) },
+            bOffset: { value: new THREE.Vector2(0.005, 0) },
+            opacity: { value: 0.0 }, // Start with no effect
           },
           vertexShader: `
             varying vec2 vUv;
@@ -205,16 +206,22 @@ export default function Scene() {
             uniform sampler2D tDiffuse;
             uniform vec2 rOffset;
             uniform vec2 bOffset;
+            uniform float opacity;
             varying vec2 vUv;
             void main() {
               vec4 cr = texture2D(tDiffuse, vUv + rOffset);
               vec4 cg = texture2D(tDiffuse, vUv);
               vec4 cb = texture2D(tDiffuse, vUv + bOffset);
-              gl_FragColor = vec4(cr.r, cg.g, cb.b, cg.a);
+              
+              vec4 chromatic = vec4(cr.r, cg.g, cb.b, cg.a);
+              gl_FragColor = mix(cg, chromatic, opacity);
             }
           `,
         });
         composer.addPass(chromaticAberrationPass);
+
+        // Store reference to chromatic aberration pass
+        chromaticPassRef.current = chromaticAberrationPass;
       },
       undefined,
       (error) => {
@@ -234,21 +241,50 @@ export default function Scene() {
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
-          isDriftingRef.current = true;
-          driftStartTimeRef.current = Date.now();
+          // Start drift after 1.5 second delay
+          setTimeout(() => {
+            isDriftingRef.current = true;
+            driftStartTimeRef.current = Date.now();
+            driftVelocityRef.current.copy(targetDriftVelocityRef.current);
+          }, 1500);
           animationProgressRef.current = 1;
-          driftVelocityRef.current.copy(targetDriftVelocityRef.current);
         }
 
         const t = animationProgressRef.current;
         const easedProgress =
           t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
 
+        // Fade in chromatic aberration during movement with custom timing
+        let chromaticOpacity = 0;
+        if (t < 0.4) {
+          // Slower fade in (0 to 0.4)
+          chromaticOpacity = (t / 0.4) * (t / 0.4); // Quadratic ease-in
+        } else if (t < 0.6) {
+          // Hold at full opacity (0.4 to 0.6)
+          chromaticOpacity = 1.0;
+        } else {
+          // Quick fade out (0.6 to 1.0)
+          const fadeOutProgress = (t - 0.6) / 0.4;
+          chromaticOpacity =
+            1.0 - fadeOutProgress * fadeOutProgress * fadeOutProgress; // Cubic ease-out
+        }
+
+        if (chromaticPassRef.current?.uniforms?.opacity) {
+          chromaticPassRef.current.uniforms.opacity.value = chromaticOpacity;
+        }
+
         camera.position.lerpVectors(
           startPositionRef.current,
           targetPositionRef.current,
           easedProgress
         );
+      } else if (
+        !isAnimatingRef.current &&
+        !isDriftingRef.current &&
+        chromaticPassRef.current?.uniforms?.opacity
+      ) {
+        // Ensure chromatic aberration is off when not moving
+        chromaticPassRef.current.uniforms.opacity.value = 0;
       }
 
       if (isDriftingRef.current && camera) {
