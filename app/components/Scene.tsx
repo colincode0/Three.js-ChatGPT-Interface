@@ -5,16 +5,35 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-// Define camera positions with more extreme differences
-const VIEWS = {
-  view1: {
-    position: new THREE.Vector3(2, 0, 0),
-    target: new THREE.Vector3(0, 0, 0),
-  },
-  view2: {
-    position: new THREE.Vector3(0, 2, 2),
-    target: new THREE.Vector3(0, 0, 0),
-  },
+// Function to generate random position near current position
+const getRandomPosition = (currentPosition: THREE.Vector3) => {
+  // Maximum angle change (in radians) per click
+  const maxAngleChange = Math.PI / 4; // 45 degrees
+  // Maximum distance to move from current position
+  const maxDistance = 0.8;
+
+  // Generate random offset within constraints
+  const angleOffset = (Math.random() * 2 - 1) * maxAngleChange;
+  const distanceOffset = Math.random() * maxDistance;
+
+  // Convert current position to spherical coordinates
+  const currentSpherical = new THREE.Spherical().setFromVector3(
+    currentPosition
+  );
+
+  // Apply constrained random changes to spherical coordinates
+  currentSpherical.phi = Math.max(
+    0.1,
+    Math.min(Math.PI - 0.1, currentSpherical.phi + angleOffset)
+  );
+  currentSpherical.theta += (Math.random() * 2 - 1) * maxAngleChange;
+  currentSpherical.radius = Math.max(
+    1,
+    Math.min(2, currentSpherical.radius + distanceOffset)
+  );
+
+  // Convert back to Cartesian coordinates
+  return new THREE.Vector3().setFromSpherical(currentSpherical);
 };
 
 export default function Scene() {
@@ -26,14 +45,22 @@ export default function Scene() {
   const [error, setError] = useState<string | null>(null);
 
   // Add refs for animation
-  const targetPositionRef = useRef(new THREE.Vector3(2, 0, 0));
+  const startPositionRef = useRef(new THREE.Vector3());
+  const targetPositionRef = useRef(new THREE.Vector3(1.5, 0, 0));
+  const animationProgressRef = useRef(0);
   const isAnimatingRef = useRef(false);
 
-  const moveToView = (view: keyof typeof VIEWS) => {
-    if (!cameraRef.current || !controlsRef.current) return;
+  const moveToRandomView = () => {
+    if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
+      return;
 
-    const targetView = VIEWS[view];
-    targetPositionRef.current.copy(targetView.position);
+    // Store start position and generate new target
+    startPositionRef.current.copy(cameraRef.current.position);
+    const newPosition = getRandomPosition(cameraRef.current.position);
+    targetPositionRef.current.copy(newPosition);
+
+    // Reset animation progress
+    animationProgressRef.current = 0;
     isAnimatingRef.current = true;
   };
 
@@ -50,7 +77,8 @@ export default function Scene() {
       0.1,
       1000
     );
-    camera.position.copy(VIEWS.view1.position);
+    const initialPosition = new THREE.Vector3(1.5, 0, 0);
+    camera.position.copy(initialPosition);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
@@ -67,7 +95,7 @@ export default function Scene() {
     controls.enableZoom = false;
     controls.enablePan = false;
     controls.enableRotate = false;
-    controls.target.copy(VIEWS.view1.target);
+    controls.target.set(0, 0, 0);
     controls.update();
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -106,18 +134,30 @@ export default function Scene() {
       }
     );
 
-    // Animation loop with lerp
+    // Animation loop with custom easing
     const animate = () => {
       requestAnimationFrame(animate);
 
       if (isAnimatingRef.current && camera) {
-        // Interpolate camera position
-        camera.position.lerp(targetPositionRef.current, 0.02);
+        // Update progress
+        animationProgressRef.current += 0.015; // Adjust speed here
 
-        // Check if we're close enough to stop animating
-        if (camera.position.distanceTo(targetPositionRef.current) < 0.01) {
+        if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
+          animationProgressRef.current = 1;
         }
+
+        // Custom easing function (cubic ease-in-out for smoother deceleration)
+        const t = animationProgressRef.current;
+        const easedProgress =
+          t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+        // Interpolate position
+        camera.position.lerpVectors(
+          startPositionRef.current,
+          targetPositionRef.current,
+          easedProgress
+        );
       }
 
       controls.update();
@@ -154,16 +194,10 @@ export default function Scene() {
       />
       <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex gap-4 z-50">
         <button
-          onClick={() => moveToView("view1")}
+          onClick={moveToRandomView}
           className="px-6 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 text-white rounded-full transition-all cursor-pointer"
         >
-          View 1
-        </button>
-        <button
-          onClick={() => moveToView("view2")}
-          className="px-6 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 text-white rounded-full transition-all cursor-pointer"
-        >
-          View 2
+          Move Camera
         </button>
       </div>
       {loading && (
