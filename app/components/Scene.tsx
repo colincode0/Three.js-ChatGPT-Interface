@@ -124,17 +124,17 @@ export default function Scene() {
     scene.add(whiteAmbient);
 
     // Main light
-    const mainLight = new THREE.PointLight(0x808080, 15.0); // Grey light
+    const mainLight = new THREE.PointLight(0x00ffff, 15.0); // Cyan light
     mainLight.position.set(8, 4, 8);
     scene.add(mainLight);
 
     // Fill light
-    const fillLight = new THREE.PointLight(0x808080, 12.0); // Grey light
+    const fillLight = new THREE.PointLight(0x00ffff, 12.0); // Cyan light
     fillLight.position.set(-6, 2, -6);
     scene.add(fillLight);
 
     // Rim light
-    const rimLight = new THREE.PointLight(0x808080, 8.0); // Grey light
+    const rimLight = new THREE.PointLight(0x00ffff, 8.0); // Cyan light
     rimLight.position.set(0, 10, -10);
     scene.add(rimLight);
 
@@ -187,7 +187,7 @@ export default function Scene() {
         vignettePass.uniforms["darkness"].value = 1.6;
         composer.addPass(vignettePass);
 
-        // Add chromatic aberration with movement-based opacity
+        // Add chromatic aberration with cyan separation
         const chromaticAberrationPass = new ShaderPass({
           uniforms: {
             tDiffuse: { value: null },
@@ -215,16 +215,16 @@ export default function Scene() {
               vec4 cg = texture2D(tDiffuse, vUv + gOffset);
               vec4 cb = texture2D(tDiffuse, vUv + bOffset);
               
-              // Create cyan, green, and blue separation
+              // Create cyan separation only
               vec4 chromatic = vec4(
-                cr.g * 0.5 + cr.b,  // Cyan (half G + B)
-                cg.g,               // Green
-                cb.b,               // Blue
+                0.0,                   // No red
+                (cb.g + cb.b) * 0.7,  // Cyan (G + B)
+                cb.b,                  // Keep some blue
                 cg.a
               );
               
               // Mix with reduced opacity
-              gl_FragColor = mix(cg, chromatic, opacity * 0.7);
+              gl_FragColor = mix(cg, chromatic, opacity * 0.25);
             }
           `,
         });
@@ -255,7 +255,8 @@ export default function Scene() {
           setTimeout(() => {
             isDriftingRef.current = true;
             driftStartTimeRef.current = Date.now();
-            driftVelocityRef.current.copy(targetDriftVelocityRef.current);
+            // Start with zero velocity and gradually increase
+            driftVelocityRef.current.set(0, 0, 0);
           }, 1500);
           animationProgressRef.current = 1;
         }
@@ -298,6 +299,17 @@ export default function Scene() {
       }
 
       if (isDriftingRef.current && camera) {
+        // Calculate time since drift started (in seconds)
+        const driftTime = (Date.now() - driftStartTimeRef.current) / 1000;
+        // Ease in the drift over 0.5 seconds
+        const driftProgress = Math.min(driftTime / 0.5, 1);
+        const easeInDrift = driftProgress * driftProgress; // Quadratic ease-in
+
+        // Interpolate current velocity towards target velocity
+        driftVelocityRef.current.lerp(
+          targetDriftVelocityRef.current,
+          easeInDrift
+        );
         camera.position.add(driftVelocityRef.current);
 
         const distanceFromCenter = camera.position.length();
