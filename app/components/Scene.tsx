@@ -140,7 +140,7 @@ export default function Scene() {
 
       if (isAnimatingRef.current && camera) {
         // Update progress
-        animationProgressRef.current += 0.015; // Adjust speed here
+        animationProgressRef.current += 0.005; // Reduced from 0.0075 for even slower movement
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
