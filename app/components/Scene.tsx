@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
+import { AfterimagePass } from "three/examples/jsm/postprocessing/AfterimagePass.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 // Function to generate random position near current position
 const getRandomPosition = (currentPosition: THREE.Vector3) => {
@@ -40,92 +44,86 @@ const getRandomPosition = (currentPosition: THREE.Vector3) => {
 };
 
 export default function Scene() {
+  // Pre-create reusable vectors to avoid garbage collection
+  const startPositionRef = useRef(new THREE.Vector3());
+  const targetPositionRef = useRef(new THREE.Vector3(1.5, 0, 0));
+  const driftVelocityRef = useRef(new THREE.Vector3());
+  const targetDriftVelocityRef = useRef(new THREE.Vector3());
+  const idealPosition = useRef(new THREE.Vector3());
+  const tempVector = useRef(new THREE.Vector3());
+
+  // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const composerRef = useRef<EffectComposer | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
-  // Add refs for animation and drift
-  const startPositionRef = useRef(new THREE.Vector3());
-  const targetPositionRef = useRef(new THREE.Vector3(1.5, 0, 0));
+  // Animation state
   const animationProgressRef = useRef(0);
   const isAnimatingRef = useRef(false);
-  const driftVelocityRef = useRef(new THREE.Vector3());
-  const targetDriftVelocityRef = useRef(new THREE.Vector3());
   const driftStartTimeRef = useRef(0);
   const isDriftingRef = useRef(false);
-
-  const moveToRandomView = () => {
-    if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
-      return;
-
-    // Store start position and generate new target
-    startPositionRef.current.copy(cameraRef.current.position);
-    const newPosition = getRandomPosition(cameraRef.current.position);
-    targetPositionRef.current.copy(newPosition);
-
-    // Calculate target drift velocity based on movement direction
-    const moveDirection = new THREE.Vector3()
-      .subVectors(targetPositionRef.current, startPositionRef.current)
-      .normalize();
-    const driftSpeed = 0.0002; // Very slow drift
-    targetDriftVelocityRef.current.copy(
-      moveDirection.multiplyScalar(driftSpeed)
-    );
-    driftVelocityRef.current.set(0, 0, 0); // Reset current drift velocity
-
-    // Reset animation progress
-    animationProgressRef.current = 0;
-    isAnimatingRef.current = true;
-    isDriftingRef.current = false;
-  };
+  const lastTimeRef = useRef(0);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Scene setup
     const scene = new THREE.Scene();
     sceneRef.current = scene;
     scene.background = new THREE.Color(0x000000);
 
-    // Add subtle fog for atmospheric effect
-    scene.fog = new THREE.FogExp2(0x000000, 0.15);
-
+    // Camera with optimized far plane
     const camera = new THREE.PerspectiveCamera(
       60,
       window.innerWidth / window.innerHeight,
       0.1,
-      1000
+      100 // Reduced from default 2000
     );
-    const initialPosition = new THREE.Vector3(1.5, 0, 0);
-    camera.position.copy(initialPosition);
+    camera.position.copy(targetPositionRef.current);
     cameraRef.current = camera;
 
+    // Renderer with optimized settings
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
+      powerPreference: "high-performance",
+      precision: "mediump",
     });
-
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio
     renderer.setSize(window.innerWidth, window.innerHeight);
     containerRef.current.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
 
-    // Setup post-processing
+    // Post-processing setup
     const composer = new EffectComposer(renderer);
     composerRef.current = composer;
 
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
-    // Add bloom effect for glow
+    // Optimized bloom pass
     const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.4, // reduced strength from 0.5
-      0.5, // increased radius from 0.4 for softer glow
-      0.9 // increased threshold from 0.85
+      new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2), // Half resolution
+      0.5,
+      0.8,
+      0.85
     );
+    bloomPass.threshold = 0.2;
+    bloomPass.strength = 0.6;
+    bloomPass.radius = 0.5;
     composer.addPass(bloomPass);
 
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x111111, 0.4);
+    scene.add(ambientLight);
+
+    const mainLight = new THREE.PointLight(0xc4d1ff, 22.0); // Blueish white light
+    mainLight.position.set(8, 4, 8);
+    scene.add(mainLight);
+
+    // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
     controlsRef.current = controls;
     controls.enableDamping = true;
@@ -136,109 +134,76 @@ export default function Scene() {
     controls.target.set(0, 0, 0);
     controls.update();
 
-    // Softer ambient light
-    const ambientLight = new THREE.AmbientLight(0x111111, 0.4); // reduced from 0.6
-    scene.add(ambientLight);
-
-    // Main soft light from front (more subtle)
-    const frontLight = new THREE.PointLight(0xffffff, 0.8); // reduced from 1.5
-    frontLight.position.set(0, 0, 2);
-    scene.add(frontLight);
-
-    // Subtle rim light from back
-    const backLight = new THREE.PointLight(0x0066ff, 0.6); // reduced from 1.2
-    backLight.position.set(0, 0, -2);
-    scene.add(backLight);
-
-    // Additional soft lights for atmosphere (removed previous top/bottom lights)
-
-    // Add more blue lights in a distributed pattern
-    const blueLightPositions = [
-      // Upper hemisphere - spread much wider
-      new THREE.Vector3(6, 3, 6),
-      new THREE.Vector3(-6, 3, -6),
-      new THREE.Vector3(-6, 3, 6),
-      new THREE.Vector3(6, 3, -6),
-      new THREE.Vector3(0, 5, 0),
-
-      // Middle layer - spread in a wider circle
-      new THREE.Vector3(8, 0, 0),
-      new THREE.Vector3(-8, 0, 0),
-      new THREE.Vector3(0, 0, 8),
-      new THREE.Vector3(0, 0, -8),
-      new THREE.Vector3(5, 0, 5),
-      new THREE.Vector3(-5, 0, -5),
-
-      // Lower hemisphere - spread wider
-      new THREE.Vector3(6, -3, 6),
-      new THREE.Vector3(-6, -3, -6),
-      new THREE.Vector3(-6, -3, 6),
-      new THREE.Vector3(6, -3, -6),
-      new THREE.Vector3(0, -5, 0),
-    ];
-
-    blueLightPositions.forEach((position) => {
-      const blueLight = new THREE.PointLight(0x0066ff, 0.25); // reduced slightly more
-      blueLight.position.copy(position);
-      // Increase distance for wider spread
-      blueLight.distance = 10;
-      blueLight.decay = 1.5; // reduced decay for more spread
-      scene.add(blueLight);
-    });
-
+    // Model loading
     const loader = new GLTFLoader();
     loader.load(
       "/3d/brain/scene.gltf",
       (gltf) => {
         const model = gltf.scene;
-        const scale = 15;
-        model.scale.setScalar(scale);
+        model.scale.setScalar(15);
 
+        // Use existing vector for center calculation
         const box = new THREE.Box3().setFromObject(model);
-        const center = box.getCenter(new THREE.Vector3());
-        model.position.sub(center);
+        box.getCenter(tempVector.current);
+        model.position.sub(tempVector.current);
 
         scene.add(model);
-        setLoading(false);
-      },
-      (progress) => {
-        console.log(
-          "Loading progress:",
-          (progress.loaded / progress.total) * 100,
-          "%"
+
+        // Add outline with optimized settings
+        const outlinePass = new OutlinePass(
+          new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2),
+          scene,
+          camera
         );
+
+        outlinePass.edgeStrength = 3.0;
+        outlinePass.edgeGlow = 0.8;
+        outlinePass.edgeThickness = 2.0;
+        outlinePass.pulsePeriod = 0;
+        outlinePass.visibleEdgeColor.set(0xffffff); // White outline
+        outlinePass.hiddenEdgeColor.set(0xffffff); // White for hidden edges
+
+        outlinePass.selectedObjects = [model];
+        composer.addPass(outlinePass);
+
+        // Add vignette effect
+        const vignettePass = new ShaderPass(VignetteShader);
+        vignettePass.uniforms["offset"].value = 0.95;
+        vignettePass.uniforms["darkness"].value = 1.6;
+        composer.addPass(vignettePass);
+
+        // Add afterimage effect
+        const afterimagePass = new AfterimagePass(0.85); // Reduced from 0.96 to 0.85 for more subtle effect
+        composer.addPass(afterimagePass);
       },
+      undefined,
       (error) => {
         console.error("Error loading model:", error);
-        setError("Failed to load 3D model");
-        setLoading(false);
       }
     );
 
-    // Animation loop with custom easing and drift
-    const animate = () => {
+    // Optimized animation loop
+    const animate = (currentTime: number) => {
       requestAnimationFrame(animate);
 
+      const deltaTime = Math.min(currentTime - lastTimeRef.current, 32); // Cap at ~30fps
+      lastTimeRef.current = currentTime;
+
       if (isAnimatingRef.current && camera) {
-        // Update progress faster for more immediate response
-        animationProgressRef.current += 0.006; // increased from 0.004
+        animationProgressRef.current += 0.006 * (deltaTime / 16.67);
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
           isDriftingRef.current = true;
           driftStartTimeRef.current = Date.now();
           animationProgressRef.current = 1;
-
-          // Start with full drift velocity immediately
           driftVelocityRef.current.copy(targetDriftVelocityRef.current);
         }
 
-        // Custom easing function (reduced power for more fluid motion)
         const t = animationProgressRef.current;
         const easedProgress =
           t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
 
-        // Interpolate position
         camera.position.lerpVectors(
           startPositionRef.current,
           targetPositionRef.current,
@@ -246,20 +211,16 @@ export default function Scene() {
         );
       }
 
-      // Apply drift if active
       if (isDriftingRef.current && camera) {
-        // Remove the drift ease-in
         camera.position.add(driftVelocityRef.current);
 
-        // Keep the camera within reasonable bounds
         const distanceFromCenter = camera.position.length();
         if (distanceFromCenter > 2.5 || distanceFromCenter < 0.5) {
-          // If we drift too far, move back towards a reasonable distance more quickly
-          const idealPosition = camera.position
-            .clone()
+          idealPosition.current
+            .copy(camera.position)
             .normalize()
             .multiplyScalar(1.5);
-          camera.position.lerp(idealPosition, 0.02); // increased from 0.01 for faster correction
+          camera.position.lerp(idealPosition.current, 0.02);
         }
       }
 
@@ -267,26 +228,42 @@ export default function Scene() {
       composer.render();
     };
 
-    animate();
+    animate(0);
 
+    // Optimized resize handler
     const handleResize = () => {
       if (!camera || !renderer || !composer) return;
+
       const width = window.innerWidth;
       const height = window.innerHeight;
+
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+
       renderer.setSize(width, height);
       composer.setSize(width, height);
     };
 
     window.addEventListener("resize", handleResize);
 
+    // Cleanup
     return () => {
       window.removeEventListener("resize", handleResize);
-      if (containerRef.current) {
+      if (containerRef.current && renderer.domElement) {
         containerRef.current.removeChild(renderer.domElement);
       }
+
+      // Dispose of resources
       renderer.dispose();
+      composer.dispose();
+      scene.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.geometry.dispose();
+          if (object.material instanceof THREE.Material) {
+            object.material.dispose();
+          }
+        }
+      });
     };
   }, []);
 
@@ -298,22 +275,36 @@ export default function Scene() {
       />
       <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex gap-4 z-50">
         <button
-          onClick={moveToRandomView}
+          onClick={() => {
+            if (
+              !cameraRef.current ||
+              !controlsRef.current ||
+              isAnimatingRef.current
+            )
+              return;
+
+            startPositionRef.current.copy(cameraRef.current.position);
+            tempVector.current = getRandomPosition(cameraRef.current.position);
+            targetPositionRef.current.copy(tempVector.current);
+
+            const moveDirection = tempVector.current
+              .subVectors(targetPositionRef.current, startPositionRef.current)
+              .normalize();
+            const driftSpeed = 0.0002;
+            targetDriftVelocityRef.current.copy(
+              moveDirection.multiplyScalar(driftSpeed)
+            );
+            driftVelocityRef.current.set(0, 0, 0);
+
+            animationProgressRef.current = 0;
+            isAnimatingRef.current = true;
+            isDriftingRef.current = false;
+          }}
           className="px-6 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 text-white rounded-full transition-all cursor-pointer"
         >
           Move Camera
         </button>
       </div>
-      {loading && (
-        <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center text-white z-50">
-          Loading model...
-        </div>
-      )}
-      {error && (
-        <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center text-red-500 z-50">
-          {error}
-        </div>
-      )}
     </div>
   );
 }
