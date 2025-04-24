@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -21,7 +21,7 @@ const TEMP_SPHERICAL = new THREE.Spherical();
 const getRandomPosition = (
   currentPosition: THREE.Vector3,
   out: THREE.Vector3
-) => {
+): THREE.Vector3 => {
   // Maximum angle change (in radians) per click
   const maxAngleChange = HALF_PI / 2; // 45 degrees
   // Maximum distance to move from current position
@@ -49,7 +49,7 @@ const getRandomPosition = (
   return out.setFromSpherical(TEMP_SPHERICAL);
 };
 
-export default function Scene() {
+function Scene() {
   // Pre-create reusable vectors to avoid garbage collection
   const startPositionRef = useRef(new THREE.Vector3());
   const targetPositionRef = useRef(new THREE.Vector3(1.5, 0, 0));
@@ -74,6 +74,28 @@ export default function Scene() {
   const isAnimatingRef = useRef(false);
   const driftStartTimeRef = useRef(0);
   const isDriftingRef = useRef(false);
+
+  const handleClick = useCallback(() => {
+    if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
+      return;
+
+    startPositionRef.current.copy(cameraRef.current.position);
+    getRandomPosition(cameraRef.current.position, tempVector.current);
+    targetPositionRef.current.copy(tempVector.current);
+
+    const moveDirection = tempVector.current
+      .subVectors(targetPositionRef.current, startPositionRef.current)
+      .normalize();
+    const driftSpeed = 0.0002;
+    targetDriftVelocityRef.current.copy(
+      moveDirection.multiplyScalar(driftSpeed)
+    );
+    driftVelocityRef.current.set(0, 0, 0);
+
+    animationProgressRef.current = 0;
+    isAnimatingRef.current = true;
+    isDriftingRef.current = false;
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -104,16 +126,16 @@ export default function Scene() {
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // Post-processing setup
+    // Post-processing setup with optimized settings
     const composer = new EffectComposer(renderer);
     composerRef.current = composer;
 
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
-    // Optimized bloom pass
+    // Optimized bloom pass with reduced resolution
     const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2), // Half resolution
+      new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2),
       0.5,
       0.8,
       0.85
@@ -249,7 +271,7 @@ export default function Scene() {
 
     // Optimized animation loop with time smoothing
     let lastFrameTime = 0;
-    const frameTimeBuffer: number[] = new Array(10).fill(16.67); // Buffer for frame time averaging
+    const frameTimeBuffer: number[] = new Array(10).fill(16.67);
     let frameTimeIndex = 0;
 
     const animate = (currentTime: number) => {
@@ -396,34 +418,7 @@ export default function Scene() {
   return (
     <div
       className="fixed inset-0 w-full h-full cursor-pointer"
-      onClick={() => {
-        if (
-          !cameraRef.current ||
-          !controlsRef.current ||
-          isAnimatingRef.current
-        )
-          return;
-
-        startPositionRef.current.copy(cameraRef.current.position);
-        tempVector.current = getRandomPosition(
-          cameraRef.current.position,
-          tempVector.current
-        );
-        targetPositionRef.current.copy(tempVector.current);
-
-        const moveDirection = tempVector.current
-          .subVectors(targetPositionRef.current, startPositionRef.current)
-          .normalize();
-        const driftSpeed = 0.0002;
-        targetDriftVelocityRef.current.copy(
-          moveDirection.multiplyScalar(driftSpeed)
-        );
-        driftVelocityRef.current.set(0, 0, 0);
-
-        animationProgressRef.current = 0;
-        isAnimatingRef.current = true;
-        isDriftingRef.current = false;
-      }}
+      onClick={handleClick}
     >
       <motion.div
         ref={containerRef}
@@ -463,3 +458,5 @@ export default function Scene() {
     </div>
   );
 }
+
+export default Scene;
