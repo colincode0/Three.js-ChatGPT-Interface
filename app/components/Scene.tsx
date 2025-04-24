@@ -293,14 +293,8 @@ function Scene() {
       frameTimeBuffer[frameTimeIndex] = rawDeltaTime;
       frameTimeIndex = (frameTimeIndex + 1) % frameTimeBuffer.length;
 
-      // Calculate average frame time
-      const avgDeltaTime = Math.min(
-        frameTimeBuffer.reduce((a, b) => a + b) / frameTimeBuffer.length,
-        32 // Cap at ~30fps
-      );
-
       if (isAnimatingRef.current && camera) {
-        animationProgressRef.current += 0.006 * (avgDeltaTime / 16.67);
+        animationProgressRef.current += 0.006 * (rawDeltaTime / 16.67);
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
@@ -321,13 +315,13 @@ function Scene() {
         if (t < 0.5) {
           // Slower fade in (0 to 0.5)
           chromaticOpacity = (t / 0.5) * (t / 0.5); // Quadratic ease-in
-        } else if (t < 0.8) {
+        } else if (t < 0.7) {
           // Extended from 0.6
-          // Hold at full opacity (0.5 to 0.8)
+          // Hold at full opacity (0.5 to 0.7)
           chromaticOpacity = 1.0;
         } else {
-          // Quick fade out (0.8 to 1.0)
-          const fadeOutProgress = (t - 0.8) / 0.2; // Adjusted for new timing
+          // Quick fade out (0.7 to 1.0)
+          const fadeOutProgress = (t - 0.7) / 0.3; // Adjusted for new timing
           chromaticOpacity =
             1.0 - fadeOutProgress * fadeOutProgress * fadeOutProgress; // Cubic ease-out
         }
