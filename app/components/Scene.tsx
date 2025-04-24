@@ -176,8 +176,8 @@ export default function Scene() {
           camera
         );
 
-        outlinePass.edgeStrength = 3.0;
-        outlinePass.edgeGlow = 1.5;
+        outlinePass.edgeStrength = 3;
+        outlinePass.edgeGlow = 0.75;
         outlinePass.edgeThickness = 2.0;
         outlinePass.pulsePeriod = 0;
         outlinePass.visibleEdgeColor.set(0xffffff); // White outline
@@ -229,7 +229,7 @@ export default function Scene() {
               );
               
               // Mix with reduced opacity
-              gl_FragColor = mix(cg, chromatic, opacity * 0.25);
+              gl_FragColor = mix(cg, chromatic, opacity * 0.3);
             }
           `,
         });
@@ -270,13 +270,11 @@ export default function Scene() {
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
-          // Start drift after 1.5 second delay
-          setTimeout(() => {
-            isDriftingRef.current = true;
-            driftStartTimeRef.current = performance.now();
-            // Start with zero velocity and gradually increase
-            driftVelocityRef.current.set(0, 0, 0);
-          }, 1500);
+          // Start drift immediately
+          isDriftingRef.current = true;
+          driftStartTimeRef.current = performance.now();
+          // Start with zero velocity and gradually increase
+          driftVelocityRef.current.set(0, 0, 0);
           animationProgressRef.current = 1;
         }
 
@@ -286,15 +284,17 @@ export default function Scene() {
 
         // Fade in chromatic aberration during movement with custom timing
         let chromaticOpacity = 0;
-        if (t < 0.4) {
-          // Slower fade in (0 to 0.4)
-          chromaticOpacity = (t / 0.4) * (t / 0.4); // Quadratic ease-in
-        } else if (t < 0.6) {
-          // Hold at full opacity (0.4 to 0.6)
+        if (t < 0.5) {
+          // Extended from 0.4
+          // Slower fade in (0 to 0.5)
+          chromaticOpacity = (t / 0.5) * (t / 0.5); // Quadratic ease-in
+        } else if (t < 0.7) {
+          // Extended from 0.6
+          // Hold at full opacity (0.5 to 0.7)
           chromaticOpacity = 1.0;
         } else {
-          // Quick fade out (0.6 to 1.0)
-          const fadeOutProgress = (t - 0.6) / 0.4;
+          // Quick fade out (0.7 to 1.0)
+          const fadeOutProgress = (t - 0.7) / 0.3; // Adjusted for new timing
           chromaticOpacity =
             1.0 - fadeOutProgress * fadeOutProgress * fadeOutProgress; // Cubic ease-out
         }
