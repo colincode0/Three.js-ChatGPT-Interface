@@ -35,11 +35,20 @@ const getRandomPosition = (
   TEMP_SPHERICAL.setFromVector3(currentPosition);
 
   // Apply constrained random changes to spherical coordinates
+  // Constrain phi (vertical angle) to stay between 30 and 150 degrees
+  // This keeps the camera from going too high or too low
   TEMP_SPHERICAL.phi = Math.max(
-    0.1,
-    Math.min(Math.PI - 0.1, TEMP_SPHERICAL.phi + angleOffset)
+    Math.PI / 6, // 30 degrees
+    Math.min(
+      (5 * Math.PI) / 6, // 150 degrees
+      TEMP_SPHERICAL.phi + angleOffset
+    )
   );
+
+  // Allow full rotation around the y-axis (theta)
   TEMP_SPHERICAL.theta += (Math.random() * 2 - 1) * maxAngleChange;
+
+  // Keep radius within bounds
   TEMP_SPHERICAL.radius = Math.max(
     1,
     Math.min(2, TEMP_SPHERICAL.radius + distanceOffset)
@@ -310,16 +319,15 @@ function Scene() {
         // Fade in chromatic aberration during movement with custom timing
         let chromaticOpacity = 0;
         if (t < 0.5) {
-          // Extended from 0.4
           // Slower fade in (0 to 0.5)
           chromaticOpacity = (t / 0.5) * (t / 0.5); // Quadratic ease-in
-        } else if (t < 0.7) {
+        } else if (t < 0.8) {
           // Extended from 0.6
-          // Hold at full opacity (0.5 to 0.7)
+          // Hold at full opacity (0.5 to 0.8)
           chromaticOpacity = 1.0;
         } else {
-          // Quick fade out (0.7 to 1.0)
-          const fadeOutProgress = (t - 0.7) / 0.3; // Adjusted for new timing
+          // Quick fade out (0.8 to 1.0)
+          const fadeOutProgress = (t - 0.8) / 0.2; // Adjusted for new timing
           chromaticOpacity =
             1.0 - fadeOutProgress * fadeOutProgress * fadeOutProgress; // Cubic ease-out
         }
