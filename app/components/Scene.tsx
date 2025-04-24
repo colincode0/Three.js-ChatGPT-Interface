@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -10,6 +10,7 @@ import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { motion, AnimatePresence } from "framer-motion";
 
 // Pre-create reusable vectors and objects to avoid garbage collection
 const HALF_PI = Math.PI / 2;
@@ -57,6 +58,8 @@ export default function Scene() {
   const idealPosition = useRef(new THREE.Vector3());
   const tempVector = useRef(new THREE.Vector3());
   const chromaticPassRef = useRef<ShaderPass | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isModelLoaded, setIsModelLoaded] = useState(false);
 
   // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -85,7 +88,7 @@ export default function Scene() {
       60,
       window.innerWidth / window.innerHeight,
       0.1,
-      100 // Reduced from default 2000
+      100
     );
     camera.position.copy(targetPositionRef.current);
     cameraRef.current = camera;
@@ -96,7 +99,7 @@ export default function Scene() {
       powerPreference: "high-performance",
       precision: "mediump",
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
@@ -180,8 +183,8 @@ export default function Scene() {
         outlinePass.edgeGlow = 0.75;
         outlinePass.edgeThickness = 2.0;
         outlinePass.pulsePeriod = 0;
-        outlinePass.visibleEdgeColor.set(0xffffff); // White outline
-        outlinePass.hiddenEdgeColor.set(0xffffff); // White for hidden edges
+        outlinePass.visibleEdgeColor.set(0xffffff);
+        outlinePass.hiddenEdgeColor.set(0xffffff);
 
         outlinePass.selectedObjects = [model];
         composer.addPass(outlinePass);
@@ -199,7 +202,7 @@ export default function Scene() {
             rOffset: { value: new THREE.Vector2(-0.005, 0) },
             gOffset: { value: new THREE.Vector2(0.0, 0) },
             bOffset: { value: new THREE.Vector2(0.005, 0) },
-            opacity: { value: 0.0 }, // Start with no effect
+            opacity: { value: 0.0 },
           },
           vertexShader: `
             varying vec2 vUv;
@@ -220,27 +223,27 @@ export default function Scene() {
               vec4 cg = texture2D(tDiffuse, vUv + gOffset);
               vec4 cb = texture2D(tDiffuse, vUv + bOffset);
               
-              // Create cyan separation only
               vec4 chromatic = vec4(
-                0.0,                   // No red
-                (cb.g + cb.b) * 0.7,  // Cyan (G + B)
-                cb.b,                  // Keep some blue
+                0.0,
+                (cb.g + cb.b) * 0.7,
+                cb.b,
                 cg.a
               );
               
-              // Mix with reduced opacity
               gl_FragColor = mix(cg, chromatic, opacity * 0.3);
             }
           `,
         });
         composer.addPass(chromaticAberrationPass);
-
-        // Store reference to chromatic aberration pass
         chromaticPassRef.current = chromaticAberrationPass;
+
+        setIsModelLoaded(true);
+        setIsLoading(false);
       },
       undefined,
       (error) => {
         console.error("Error loading model:", error);
+        setIsLoading(false);
       }
     );
 
@@ -391,46 +394,72 @@ export default function Scene() {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen">
-      <div
+    <div
+      className="fixed inset-0 w-full h-full cursor-pointer"
+      onClick={() => {
+        if (
+          !cameraRef.current ||
+          !controlsRef.current ||
+          isAnimatingRef.current
+        )
+          return;
+
+        startPositionRef.current.copy(cameraRef.current.position);
+        tempVector.current = getRandomPosition(
+          cameraRef.current.position,
+          tempVector.current
+        );
+        targetPositionRef.current.copy(tempVector.current);
+
+        const moveDirection = tempVector.current
+          .subVectors(targetPositionRef.current, startPositionRef.current)
+          .normalize();
+        const driftSpeed = 0.0002;
+        targetDriftVelocityRef.current.copy(
+          moveDirection.multiplyScalar(driftSpeed)
+        );
+        driftVelocityRef.current.set(0, 0, 0);
+
+        animationProgressRef.current = 0;
+        isAnimatingRef.current = true;
+        isDriftingRef.current = false;
+      }}
+    >
+      <motion.div
         ref={containerRef}
-        className="absolute top-0 left-0 w-full h-full -z-10 overflow-hidden bg-black"
+        className="absolute inset-0 w-full h-full overflow-hidden bg-black"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: isModelLoaded ? 1 : 0 }}
+        transition={{ duration: 2, ease: "easeInOut" }}
       />
-      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex gap-4 z-50">
-        <button
-          onClick={() => {
-            if (
-              !cameraRef.current ||
-              !controlsRef.current ||
-              isAnimatingRef.current
-            )
-              return;
-
-            startPositionRef.current.copy(cameraRef.current.position);
-            tempVector.current = getRandomPosition(
-              cameraRef.current.position,
-              tempVector.current
-            );
-            targetPositionRef.current.copy(tempVector.current);
-
-            const moveDirection = tempVector.current
-              .subVectors(targetPositionRef.current, startPositionRef.current)
-              .normalize();
-            const driftSpeed = 0.0002;
-            targetDriftVelocityRef.current.copy(
-              moveDirection.multiplyScalar(driftSpeed)
-            );
-            driftVelocityRef.current.set(0, 0, 0);
-
-            animationProgressRef.current = 0;
-            isAnimatingRef.current = true;
-            isDriftingRef.current = false;
-          }}
-          className="px-6 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 text-white rounded-full transition-all cursor-pointer"
-        >
-          Move Camera
-        </button>
-      </div>
+      <AnimatePresence>
+        {isLoading && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5, ease: "easeInOut" }}
+            className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-90 z-50"
+          >
+            <div className="flex flex-col items-center gap-4">
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+                className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"
+              />
+              <motion.div
+                initial={{ y: 10, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ duration: 0.5, delay: 0.2, ease: "easeOut" }}
+                className="text-white text-lg font-medium"
+              >
+                Loading
+              </motion.div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
