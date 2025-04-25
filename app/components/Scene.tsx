@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -58,6 +58,18 @@ const getRandomPosition = (
   return out.setFromSpherical(TEMP_SPHERICAL);
 };
 
+// Add this style block near the top of the file, after the imports
+const styles = `
+  @keyframes dash {
+    0% {
+      stroke-dashoffset: 0;
+    }
+    100% {
+      stroke-dashoffset: 80;
+    }
+  }
+`;
+
 function Scene() {
   // Pre-create reusable vectors to avoid garbage collection
   const startPositionRef = useRef(new THREE.Vector3());
@@ -69,6 +81,8 @@ function Scene() {
   const chromaticPassRef = useRef<ShaderPass | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  const [hasStarted, setHasStarted] = useState(false);
 
   // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -84,7 +98,33 @@ function Scene() {
   const driftStartTimeRef = useRef(0);
   const isDriftingRef = useRef(false);
 
-  const handleClick = useCallback(() => {
+  const handleFirstClick = () => {
+    if (!hasStarted) {
+      if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
+        return;
+
+      startPositionRef.current.copy(cameraRef.current.position);
+      getRandomPosition(cameraRef.current.position, tempVector.current);
+      targetPositionRef.current.copy(tempVector.current);
+
+      const moveDirection = tempVector.current
+        .subVectors(targetPositionRef.current, startPositionRef.current)
+        .normalize();
+      const driftSpeed = 0.0002;
+      targetDriftVelocityRef.current.copy(
+        moveDirection.multiplyScalar(driftSpeed)
+      );
+      driftVelocityRef.current.set(0, 0, 0);
+
+      animationProgressRef.current = 0;
+      isAnimatingRef.current = true;
+      isDriftingRef.current = false;
+      setHasStarted(true);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
     if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
       return;
 
@@ -104,7 +144,7 @@ function Scene() {
     animationProgressRef.current = 0;
     isAnimatingRef.current = true;
     isDriftingRef.current = false;
-  }, []);
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -418,46 +458,127 @@ function Scene() {
   }, []);
 
   return (
-    <div
-      className="fixed inset-0 w-full h-full cursor-pointer"
-      onClick={handleClick}
-    >
-      <motion.div
-        ref={containerRef}
-        className="absolute inset-0 w-full h-full overflow-hidden bg-black"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: isModelLoaded ? 1 : 0 }}
-        transition={{ duration: 2, ease: "easeInOut" }}
-      />
-      <AnimatePresence>
-        {isLoading && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.5, ease: "easeInOut" }}
-            className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-90 z-50"
-          >
-            <div className="flex flex-col items-center gap-4">
+    <>
+      <style>{styles}</style>
+      <div className="fixed inset-0 w-full h-full">
+        <motion.div
+          ref={containerRef}
+          className="absolute inset-0 w-full h-full overflow-hidden bg-black"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isModelLoaded ? 1 : 0 }}
+          transition={{ duration: 2, ease: "easeInOut" }}
+        />
+        <AnimatePresence>
+          {!isLoading && (
+            <motion.form
+              onSubmit={handleSubmit}
+              className="fixed top-[30%] left-1/2 -translate-x-1/2 flex flex-col items-center z-10 w-full max-w-[90vw] sm:max-w-[600px] px-4"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1 }}
+            >
+              <div className="relative w-full">
+                <textarea
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onClick={handleFirstClick}
+                  className="bg-black/50 text-white px-4 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-hidden min-h-[40px] max-h-[200px]"
+                  placeholder="Type something..."
+                  rows={1}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmit(e);
+                    }
+                  }}
+                  onInput={(e) => {
+                    const target = e.target as HTMLTextAreaElement;
+                    target.style.height = "auto";
+                    target.style.height = `${target.scrollHeight}px`;
+                  }}
+                />
+                <motion.button
+                  type="submit"
+                  className="absolute right-2 top-2 text-white/70 hover:text-white transition-colors"
+                  aria-label="Submit"
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="w-5 h-5"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+                    />
+                  </svg>
+                </motion.button>
+              </div>
+            </motion.form>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {isLoading && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-4 z-10"
+            >
               <motion.div
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ duration: 0.5, ease: "easeOut" }}
-                className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"
-              />
+                className="w-8 h-8 relative"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+                  <rect
+                    x="2"
+                    y="2"
+                    width="20"
+                    height="20"
+                    rx="4"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    className="text-white/20"
+                  />
+                  <rect
+                    x="2"
+                    y="2"
+                    width="20"
+                    height="20"
+                    rx="4"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeDasharray="80"
+                    className="text-white/70 animate-[dash_2s_linear_infinite]"
+                  />
+                </svg>
+              </motion.div>
               <motion.div
-                initial={{ y: 10, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
                 transition={{ duration: 0.5, delay: 0.2, ease: "easeOut" }}
-                className="text-white text-lg font-medium"
+                className="bg-black/50 text-white/70 px-4 py-2 rounded-lg border border-white/20"
               >
                 Loading
               </motion.div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </>
   );
 }
 
