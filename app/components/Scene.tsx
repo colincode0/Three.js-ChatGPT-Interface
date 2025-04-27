@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useLayoutEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -121,9 +121,11 @@ function Scene() {
     },
   });
 
-  // Track which words have already been shown for fade-in
-  const [shownWordCount, setShownWordCount] = useState(0);
+  // Buffer for smooth fade-in
+  const [displayedWords, setDisplayedWords] = useState<string[]>([]);
+  const [buffer, setBuffer] = useState<string[]>([]);
   const prevMsgId = useRef<string | null>(null);
+  const fadeInterval = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -131,30 +133,39 @@ function Scene() {
       const words = splitWordsAndSpaces(lastMsg.content);
       // If new message, reset
       if (prevMsgId.current !== lastMsg.id) {
-        setShownWordCount(0);
+        setDisplayedWords([]);
+        setBuffer(words);
         prevMsgId.current = lastMsg.id;
-      }
-      // Animate in new words as they appear
-      if (words.length > shownWordCount) {
-        const diff = words.length - shownWordCount;
-        let i = 1;
-        const interval = setInterval(() => {
-          setShownWordCount((count) => {
-            if (count + 1 >= words.length) {
-              clearInterval(interval);
-            }
-            return count + 1;
-          });
-          i++;
-          if (i > diff) clearInterval(interval);
-        }, 30); // Adjust speed here
-        return () => clearInterval(interval);
+      } else {
+        // Add new words to buffer
+        if (words.length > displayedWords.length + buffer.length) {
+          setBuffer(words.slice(displayedWords.length + buffer.length));
+        }
       }
     } else {
-      setShownWordCount(0);
+      setDisplayedWords([]);
+      setBuffer([]);
       prevMsgId.current = null;
+      if (fadeInterval.current) clearInterval(fadeInterval.current);
     }
   }, [messages, isChatLoading]);
+
+  // Release words from buffer at a steady pace
+  useEffect(() => {
+    if (buffer.length > 0) {
+      if (fadeInterval.current) clearInterval(fadeInterval.current);
+      fadeInterval.current = setInterval(() => {
+        setDisplayedWords((words) => [...words, buffer[0]]);
+        setBuffer((buf) => buf.slice(1));
+      }, 55); // Adjust speed here (ms per word)
+      return () => {
+        if (fadeInterval.current) clearInterval(fadeInterval.current);
+      };
+    } else {
+      if (fadeInterval.current) clearInterval(fadeInterval.current);
+      return () => {};
+    }
+  }, [buffer]);
 
   // Auto-scroll chat to bottom on new message
   useEffect(() => {
@@ -564,9 +575,6 @@ function Scene() {
     };
   }, []);
 
-  // Blinking cursor for streaming effect
-  const BlinkingCursor = () => <span className="animate-blink">|</span>;
-
   return (
     <>
       <style>{`
@@ -608,7 +616,7 @@ function Scene() {
           {!isLoading && (
             <motion.form
               onSubmit={handleFormSubmit}
-              className="fixed top-[30%] left-1/2 -translate-x-1/2 flex flex-col items-center z-10 w-full max-w-[90vw] sm:max-w-[600px] px-4"
+              className="fixed top-[30%] left-1/2 -translate-x-1/2 flex flex-col items-center z-10 w-full max-w-[98vw] sm:max-w-[700px] px-2 sm:px-6"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -619,7 +627,7 @@ function Scene() {
                   value={input}
                   onChange={handleInputChange}
                   onClick={handleFirstClick}
-                  className="bg-black/50 text-white px-4 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-hidden min-h-[40px] max-h-[200px]"
+                  className="bg-black/50 text-white px-4 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-hidden min-h-[40px] max-h-[200px] text-base sm:text-lg"
                   placeholder={
                     isChatLoading ? "Processing..." : "Type something..."
                   }
@@ -671,7 +679,7 @@ function Scene() {
               </div>
               <div
                 ref={chatBoxRef}
-                className="w-full mt-4 bg-black/50 text-white rounded-lg border border-white/20 p-4 max-h-[200px] overflow-y-auto custom-scrollbar"
+                className="w-full mt-4 bg-black/50 text-white rounded-lg border border-white/20 p-4 max-h-[220px] overflow-y-auto custom-scrollbar text-base sm:text-lg"
                 style={{ minHeight: 80 }}
               >
                 {messages.map((message, idx) => {
@@ -690,33 +698,24 @@ function Scene() {
                         }}
                       >
                         {isLast && isAI && isChatLoading ? (
-                          splitWordsAndSpaces(message.content).map(
-                            (word, i) => (
-                              <motion.span
-                                key={i}
-                                initial={{
-                                  opacity: i >= shownWordCount ? 0 : 1,
-                                }}
-                                animate={{ opacity: 1 }}
-                                transition={{ duration: 0.25 }}
-                                style={{ display: "inline" }}
-                              >
-                                {word}
-                              </motion.span>
-                            )
-                          )
+                          <motion.span
+                            key={message.content}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ duration: 0.25, ease: "easeOut" }}
+                            style={{ display: "inline" }}
+                          >
+                            {message.content}
+                          </motion.span>
                         ) : (
                           <span>{message.content}</span>
                         )}
-                        {isLast && isAI && isChatLoading && <BlinkingCursor />}
                       </div>
                     </div>
                   );
                 })}
                 {isChatLoading && messages.length === 0 && (
-                  <div className="text-white/60 italic">
-                    AI is thinking... <BlinkingCursor />
-                  </div>
+                  <div className="text-white/60 italic">AI is thinking...</div>
                 )}
               </div>
             </motion.form>
