@@ -99,7 +99,6 @@ function Scene() {
   const animationProgressRef = useRef(0);
   const isAnimatingRef = useRef(false);
   const driftStartTimeRef = useRef(0);
-  const isDriftingRef = useRef(false);
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
 
@@ -194,7 +193,6 @@ function Scene() {
 
       animationProgressRef.current = 0;
       isAnimatingRef.current = true;
-      isDriftingRef.current = false;
       setHasStarted(true);
     }
   };
@@ -229,7 +227,6 @@ function Scene() {
 
     animationProgressRef.current = 0;
     isAnimatingRef.current = true;
-    isDriftingRef.current = false;
   };
 
   useEffect(() => {
@@ -424,10 +421,7 @@ function Scene() {
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
-          // Start drift immediately
-          isDriftingRef.current = true;
           driftStartTimeRef.current = performance.now();
-          // Start with zero velocity and gradually increase
           driftVelocityRef.current.set(0, 0, 0);
           animationProgressRef.current = 1;
         }
@@ -439,17 +433,13 @@ function Scene() {
         // Fade in chromatic aberration during movement with custom timing
         let chromaticOpacity = 0;
         if (t < 0.5) {
-          // Slower fade in (0 to 0.5)
-          chromaticOpacity = (t / 0.5) * (t / 0.5); // Quadratic ease-in
+          chromaticOpacity = (t / 0.5) * (t / 0.5);
         } else if (t < 0.7) {
-          // Extended from 0.6
-          // Hold at full opacity (0.5 to 0.7)
           chromaticOpacity = 1.0;
         } else {
-          // Quick fade out (0.7 to 1.0)
-          const fadeOutProgress = (t - 0.7) / 0.3; // Adjusted for new timing
+          const fadeOutProgress = (t - 0.7) / 0.3;
           chromaticOpacity =
-            1.0 - fadeOutProgress * fadeOutProgress * fadeOutProgress; // Cubic ease-out
+            1.0 - fadeOutProgress * fadeOutProgress * fadeOutProgress;
         }
 
         if (chromaticPassRef.current?.uniforms?.opacity) {
@@ -463,14 +453,13 @@ function Scene() {
         );
       } else if (
         !isAnimatingRef.current &&
-        !isDriftingRef.current &&
         chromaticPassRef.current?.uniforms?.opacity
       ) {
-        // Ensure chromatic aberration is off when not moving
         chromaticPassRef.current.uniforms.opacity.value = 0;
       }
 
-      if (isDriftingRef.current && camera) {
+      // --- INFINITE DRIFT LOGIC ---
+      if (camera) {
         // Use performance.now() for more precise timing
         const driftTime =
           (performance.now() - driftStartTimeRef.current) / 1000;
@@ -485,12 +474,17 @@ function Scene() {
         const previousPosition = camera.position.clone();
 
         // Update drift velocity smoothly
-        driftVelocityRef.current.lerp(
-          targetDriftVelocityRef.current,
-          easeInDrift
-        );
+        if (driftTime > 10) {
+          // After 10 seconds, slow to a stop
+          driftVelocityRef.current.lerp(new THREE.Vector3(0, 0, 0), 0.01);
+        } else {
+          driftVelocityRef.current.lerp(
+            targetDriftVelocityRef.current,
+            easeInDrift
+          );
+        }
 
-        // Apply drift velocity
+        // Always apply drift velocity
         camera.position.add(driftVelocityRef.current);
 
         const distanceFromCenter = camera.position.length();
@@ -622,36 +616,55 @@ function Scene() {
               exit={{ opacity: 0 }}
               transition={{ duration: 1 }}
             >
-              <div className="relative w-full">
-                <textarea
-                  value={input}
-                  onChange={handleInputChange}
-                  onClick={handleFirstClick}
-                  className="bg-black/50 text-white px-4 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-hidden min-h-[40px] max-h-[200px] text-base sm:text-lg"
-                  placeholder={
-                    isChatLoading ? "Processing..." : "Type something..."
-                  }
-                  rows={1}
-                  disabled={isChatLoading}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      const form = e.currentTarget.form;
-                      if (form) {
-                        handleFormSubmit(
-                          new Event(
-                            "submit"
-                          ) as unknown as React.FormEvent<HTMLFormElement>
-                        );
+              <motion.div
+                className="relative w-full"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.7, ease: "easeOut" }}
+              >
+                <div className="relative w-full">
+                  <textarea
+                    value={input}
+                    onChange={handleInputChange}
+                    onClick={handleFirstClick}
+                    className="bg-black/80 text-white px-4 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-hidden min-h-[40px] max-h-[200px] text-base sm:text-lg"
+                    rows={1}
+                    disabled={isChatLoading}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        const form = e.currentTarget.form;
+                        if (form) {
+                          handleFormSubmit(
+                            new Event(
+                              "submit"
+                            ) as unknown as React.FormEvent<HTMLFormElement>
+                          );
+                        }
                       }
-                    }
-                  }}
-                  onInput={(e) => {
-                    const target = e.target as HTMLTextAreaElement;
-                    target.style.height = "auto";
-                    target.style.height = `${target.scrollHeight}px`;
-                  }}
-                />
+                    }}
+                    onInput={(e) => {
+                      const target = e.target as HTMLTextAreaElement;
+                      target.style.height = "auto";
+                      target.style.height = `${target.scrollHeight}px`;
+                    }}
+                  />
+                  <AnimatePresence mode="wait">
+                    {input.length === 0 && (
+                      <motion.span
+                        key={isChatLoading ? "responding" : "placeholder"}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="absolute left-0 top-0 w-full h-full flex items-center px-4 py-2 text-white/60 pointer-events-none select-none text-base sm:text-lg"
+                        style={{ zIndex: 1 }}
+                      >
+                        {isChatLoading ? "Responding..." : "Type something..."}
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </div>
                 <motion.button
                   type="submit"
                   className="absolute right-2 top-2 text-white/70 hover:text-white transition-colors"
@@ -676,48 +689,55 @@ function Scene() {
                     />
                   </svg>
                 </motion.button>
-              </div>
-              <div
-                ref={chatBoxRef}
-                className="w-full mt-4 bg-black/50 text-white rounded-lg border border-white/20 p-4 max-h-[220px] overflow-y-auto custom-scrollbar text-base sm:text-lg"
-                style={{ minHeight: 80 }}
-              >
-                {messages.map((message, idx) => {
-                  const isLast = idx === messages.length - 1;
-                  const isAI = message.role === "assistant";
-                  return (
-                    <div key={message.id} className="mb-2">
-                      <div className="font-semibold">
-                        {message.role === "user" ? "You" : "AI"}
+              </motion.div>
+              {messages.length > 0 && (
+                <motion.div
+                  ref={chatBoxRef}
+                  className="w-full mt-4 bg-black/80 text-white rounded-lg border border-white/20 p-4 max-h-[340px] overflow-y-auto custom-scrollbar text-base sm:text-lg"
+                  style={{ minHeight: 120 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.7, ease: "easeOut" }}
+                >
+                  {messages.map((message, idx) => {
+                    const isLast = idx === messages.length - 1;
+                    const isAI = message.role === "assistant";
+                    return (
+                      <div key={message.id} className="mb-2">
+                        <div className="font-semibold">
+                          {message.role === "user" ? "You" : "AI"}
+                        </div>
+                        <div
+                          className="text-white/80"
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {isLast && isAI && isChatLoading ? (
+                            <motion.span
+                              key={message.content}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.25, ease: "easeOut" }}
+                              style={{ display: "inline" }}
+                            >
+                              {message.content}
+                            </motion.span>
+                          ) : (
+                            <span>{message.content}</span>
+                          )}
+                        </div>
                       </div>
-                      <div
-                        className="text-white/80"
-                        style={{
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {isLast && isAI && isChatLoading ? (
-                          <motion.span
-                            key={message.content}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            transition={{ duration: 0.25, ease: "easeOut" }}
-                            style={{ display: "inline" }}
-                          >
-                            {message.content}
-                          </motion.span>
-                        ) : (
-                          <span>{message.content}</span>
-                        )}
-                      </div>
+                    );
+                  })}
+                  {isChatLoading && messages.length === 0 && (
+                    <div className="text-white/60 italic">
+                      AI is thinking...
                     </div>
-                  );
-                })}
-                {isChatLoading && messages.length === 0 && (
-                  <div className="text-white/60 italic">AI is thinking...</div>
-                )}
-              </div>
+                  )}
+                </motion.div>
+              )}
             </motion.form>
           )}
         </AnimatePresence>
