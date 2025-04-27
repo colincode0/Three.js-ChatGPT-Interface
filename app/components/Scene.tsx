@@ -576,14 +576,14 @@ function Scene() {
         /* Custom scrollbar for chat box */
         .custom-scrollbar {
           scrollbar-width: thin;
-          scrollbar-color: #00ffff #222;
+          scrollbar-color: #b0b0b0 #222;
         }
         .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
+          width: 10px;
+          height: 10px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: linear-gradient(90deg, #00ffff 0%, #0fffc0 100%);
-          border-radius: 8px;
+          background: #b0b0b0;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
           background: #222;
