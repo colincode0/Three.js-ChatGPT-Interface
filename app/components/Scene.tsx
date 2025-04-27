@@ -607,17 +607,117 @@ function Scene() {
           transition={{ duration: 2, ease: "easeInOut" }}
         />
         <AnimatePresence>
+          {isLoading && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.5, ease: "easeInOut" }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-4 z-10"
+            >
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+                className="w-8 h-8 relative"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
+                  <rect
+                    x="2"
+                    y="2"
+                    width="20"
+                    height="20"
+                    rx="4"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    className="text-white/20"
+                  />
+                  <rect
+                    x="2"
+                    y="2"
+                    width="20"
+                    height="20"
+                    rx="4"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeDasharray="80"
+                    className="text-white/70 animate-[dash_2s_linear_infinite]"
+                  />
+                </svg>
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5, delay: 0.2, ease: "easeOut" }}
+                className="bg-black/50 text-white/70 px-4 py-2 rounded-lg border border-white/20"
+              >
+                Loading 3D object
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
           {!isLoading && (
             <motion.form
               onSubmit={handleFormSubmit}
-              className="fixed top-[30%] left-1/2 -translate-x-1/2 flex flex-col items-center z-10 w-full max-w-[98vw] sm:max-w-[700px] px-2 sm:px-6"
+              className="fixed bottom-8 left-0 right-0 flex flex-col items-center z-10 w-full px-2 sm:px-6"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 1 }}
             >
+              {messages.length > 0 && (
+                <motion.div
+                  ref={chatBoxRef}
+                  className="w-full max-w-[98vw] sm:max-w-[700px] bg-black/80 text-white rounded-lg border border-white/20 p-4 max-h-[calc(100vh-9rem)] overflow-y-auto custom-scrollbar text-base sm:text-lg mb-3"
+                  style={{ minHeight: 120 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.7, ease: "easeOut" }}
+                >
+                  {messages.map((message, idx) => {
+                    const isLast = idx === messages.length - 1;
+                    const isAI = message.role === "assistant";
+                    return (
+                      <div key={message.id} className="mb-2">
+                        <div className="font-semibold">
+                          {message.role === "user" ? "You" : "AI"}
+                        </div>
+                        <div
+                          className="text-white/80"
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {isLast && isAI && isChatLoading ? (
+                            <motion.span
+                              key={message.content}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ duration: 0.25, ease: "easeOut" }}
+                              style={{ display: "inline" }}
+                            >
+                              {message.content}
+                            </motion.span>
+                          ) : (
+                            <span>{message.content}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {isChatLoading && messages.length === 0 && (
+                    <div className="text-white/60 italic">
+                      AI is thinking...
+                    </div>
+                  )}
+                </motion.div>
+              )}
               <motion.div
-                className="relative w-full"
+                className="relative w-full max-w-[98vw] sm:max-w-[700px]"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.7, ease: "easeOut" }}
@@ -690,107 +790,7 @@ function Scene() {
                   </svg>
                 </motion.button>
               </motion.div>
-              {messages.length > 0 && (
-                <motion.div
-                  ref={chatBoxRef}
-                  className="w-full mt-4 bg-black/80 text-white rounded-lg border border-white/20 p-4 max-h-[340px] overflow-y-auto custom-scrollbar text-base sm:text-lg"
-                  style={{ minHeight: 120 }}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.7, ease: "easeOut" }}
-                >
-                  {messages.map((message, idx) => {
-                    const isLast = idx === messages.length - 1;
-                    const isAI = message.role === "assistant";
-                    return (
-                      <div key={message.id} className="mb-2">
-                        <div className="font-semibold">
-                          {message.role === "user" ? "You" : "AI"}
-                        </div>
-                        <div
-                          className="text-white/80"
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          {isLast && isAI && isChatLoading ? (
-                            <motion.span
-                              key={message.content}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ duration: 0.25, ease: "easeOut" }}
-                              style={{ display: "inline" }}
-                            >
-                              {message.content}
-                            </motion.span>
-                          ) : (
-                            <span>{message.content}</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {isChatLoading && messages.length === 0 && (
-                    <div className="text-white/60 italic">
-                      AI is thinking...
-                    </div>
-                  )}
-                </motion.div>
-              )}
             </motion.form>
-          )}
-        </AnimatePresence>
-        <AnimatePresence>
-          {isLoading && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.5, ease: "easeInOut" }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-4 z-10"
-            >
-              <motion.div
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-                className="w-8 h-8 relative"
-              >
-                <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-                  <rect
-                    x="2"
-                    y="2"
-                    width="20"
-                    height="20"
-                    rx="4"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    className="text-white/20"
-                  />
-                  <rect
-                    x="2"
-                    y="2"
-                    width="20"
-                    height="20"
-                    rx="4"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeDasharray="80"
-                    className="text-white/70 animate-[dash_2s_linear_infinite]"
-                  />
-                </svg>
-              </motion.div>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.5, delay: 0.2, ease: "easeOut" }}
-                className="bg-black/50 text-white/70 px-4 py-2 rounded-lg border border-white/20"
-              >
-                Loading
-              </motion.div>
-            </motion.div>
           )}
         </AnimatePresence>
       </div>
