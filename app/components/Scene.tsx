@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useLayoutEffect } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -11,6 +11,7 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { motion, AnimatePresence } from "framer-motion";
+import { useChat } from "ai/react";
 
 // Pre-create reusable vectors and objects to avoid garbage collection
 const HALF_PI = Math.PI / 2;
@@ -70,6 +71,9 @@ const styles = `
   }
 `;
 
+// Utility to split message into words and spaces
+const splitWordsAndSpaces = (text: string) => text.split(/(\s+)/);
+
 function Scene() {
   // Pre-create reusable vectors to avoid garbage collection
   const startPositionRef = useRef(new THREE.Vector3());
@@ -81,7 +85,6 @@ function Scene() {
   const chromaticPassRef = useRef<ShaderPass | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
-  const [inputValue, setInputValue] = useState("");
   const [hasStarted, setHasStarted] = useState(false);
 
   // Scene refs
@@ -97,6 +100,68 @@ function Scene() {
   const isAnimatingRef = useRef(false);
   const driftStartTimeRef = useRef(0);
   const isDriftingRef = useRef(false);
+
+  const chatBoxRef = useRef<HTMLDivElement>(null);
+
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit: handleChatSubmit,
+    isLoading: isChatLoading,
+    setInput,
+  } = useChat({
+    api: "/api/chat",
+    onError: (error) => {
+      console.error("Chat error:", error);
+      // You could add a toast notification here if you want
+    },
+    onFinish: () => {
+      // Remove lastWords state, use a single fade-in for the whole message
+    },
+  });
+
+  // Track which words have already been shown for fade-in
+  const [shownWordCount, setShownWordCount] = useState(0);
+  const prevMsgId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+    if (lastMsg && lastMsg.role === "assistant" && isChatLoading) {
+      const words = splitWordsAndSpaces(lastMsg.content);
+      // If new message, reset
+      if (prevMsgId.current !== lastMsg.id) {
+        setShownWordCount(0);
+        prevMsgId.current = lastMsg.id;
+      }
+      // Animate in new words as they appear
+      if (words.length > shownWordCount) {
+        const diff = words.length - shownWordCount;
+        let i = 1;
+        const interval = setInterval(() => {
+          setShownWordCount((count) => {
+            if (count + 1 >= words.length) {
+              clearInterval(interval);
+            }
+            return count + 1;
+          });
+          i++;
+          if (i > diff) clearInterval(interval);
+        }, 30); // Adjust speed here
+        return () => clearInterval(interval);
+      }
+    } else {
+      setShownWordCount(0);
+      prevMsgId.current = null;
+    }
+  }, [messages, isChatLoading]);
+
+  // Auto-scroll chat to bottom on new message
+  useEffect(() => {
+    if (chatBoxRef.current) {
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   const handleFirstClick = () => {
     if (!hasStarted) {
@@ -123,11 +188,21 @@ function Scene() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
+    if (
+      !cameraRef.current ||
+      !controlsRef.current ||
+      isAnimatingRef.current ||
+      isChatLoading
+    )
       return;
 
+    // Handle chat submission
+    await handleChatSubmit(e);
+    setInput(""); // Clear input after submit
+
+    // Handle camera movement
     startPositionRef.current.copy(cameraRef.current.position);
     getRandomPosition(cameraRef.current.position, tempVector.current);
     targetPositionRef.current.copy(tempVector.current);
@@ -391,19 +466,51 @@ function Scene() {
         const driftProgress = Math.min(driftTime / 0.5, 1);
         const easeInDrift = driftProgress * driftProgress;
 
+        // Limit the maximum drift velocity to prevent stuttering
+        const maxDriftSpeed = 0.0005;
+        targetDriftVelocityRef.current.clampLength(0, maxDriftSpeed);
+
+        // Store previous position for smooth movement
+        const previousPosition = camera.position.clone();
+
+        // Update drift velocity smoothly
         driftVelocityRef.current.lerp(
           targetDriftVelocityRef.current,
           easeInDrift
         );
+
+        // Apply drift velocity
         camera.position.add(driftVelocityRef.current);
 
         const distanceFromCenter = camera.position.length();
         if (distanceFromCenter > 2.5 || distanceFromCenter < 0.5) {
+          // Calculate ideal position
           idealPosition.current
             .copy(camera.position)
             .normalize()
             .multiplyScalar(1.5);
-          camera.position.lerp(idealPosition.current, 0.02);
+
+          // Use a stronger correction when too far from center
+          const correctionStrength = distanceFromCenter > 2.5 ? 0.05 : 0.02;
+
+          // Smoothly move to ideal position
+          camera.position.lerp(idealPosition.current, correctionStrength);
+
+          // Calculate new direction based on the correction
+          const newDirection = idealPosition.current
+            .sub(previousPosition)
+            .normalize();
+
+          // Update drift velocity to match new direction while maintaining speed
+          const currentSpeed = driftVelocityRef.current.length();
+          driftVelocityRef.current.copy(
+            newDirection.multiplyScalar(currentSpeed * 0.8)
+          );
+
+          // Update target velocity to match new direction
+          targetDriftVelocityRef.current.copy(
+            newDirection.multiplyScalar(maxDriftSpeed)
+          );
         }
       }
 
@@ -457,9 +564,38 @@ function Scene() {
     };
   }, []);
 
+  // Blinking cursor for streaming effect
+  const BlinkingCursor = () => <span className="animate-blink">|</span>;
+
   return (
     <>
-      <style>{styles}</style>
+      <style>{`
+        ${styles}
+        /* Custom scrollbar for chat box */
+        .custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: #00ffff #222;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: linear-gradient(90deg, #00ffff 0%, #0fffc0 100%);
+          border-radius: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #222;
+        }
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+        .animate-blink {
+          display: inline-block;
+          width: 1ch;
+          animation: blink 1s steps(1) infinite;
+        }
+      `}</style>
       <div className="fixed inset-0 w-full h-full">
         <motion.div
           ref={containerRef}
@@ -471,7 +607,7 @@ function Scene() {
         <AnimatePresence>
           {!isLoading && (
             <motion.form
-              onSubmit={handleSubmit}
+              onSubmit={handleFormSubmit}
               className="fixed top-[30%] left-1/2 -translate-x-1/2 flex flex-col items-center z-10 w-full max-w-[90vw] sm:max-w-[600px] px-4"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -480,16 +616,26 @@ function Scene() {
             >
               <div className="relative w-full">
                 <textarea
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
+                  value={input}
+                  onChange={handleInputChange}
                   onClick={handleFirstClick}
                   className="bg-black/50 text-white px-4 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-hidden min-h-[40px] max-h-[200px]"
-                  placeholder="Type something..."
+                  placeholder={
+                    isChatLoading ? "Processing..." : "Type something..."
+                  }
                   rows={1}
+                  disabled={isChatLoading}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      handleSubmit(e);
+                      const form = e.currentTarget.form;
+                      if (form) {
+                        handleFormSubmit(
+                          new Event(
+                            "submit"
+                          ) as unknown as React.FormEvent<HTMLFormElement>
+                        );
+                      }
                     }
                   }}
                   onInput={(e) => {
@@ -504,6 +650,7 @@ function Scene() {
                   aria-label="Submit"
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
+                  disabled={isChatLoading}
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -521,6 +668,56 @@ function Scene() {
                     />
                   </svg>
                 </motion.button>
+              </div>
+              <div
+                ref={chatBoxRef}
+                className="w-full mt-4 bg-black/50 text-white rounded-lg border border-white/20 p-4 max-h-[200px] overflow-y-auto custom-scrollbar"
+                style={{ minHeight: 80 }}
+              >
+                {messages.map((message, idx) => {
+                  const isLast = idx === messages.length - 1;
+                  const isAI = message.role === "assistant";
+                  return (
+                    <div key={message.id} className="mb-2">
+                      <div className="font-semibold">
+                        {message.role === "user" ? "You" : "AI"}
+                      </div>
+                      <div
+                        className="text-white/80"
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {isLast && isAI && isChatLoading ? (
+                          splitWordsAndSpaces(message.content).map(
+                            (word, i) => (
+                              <motion.span
+                                key={i}
+                                initial={{
+                                  opacity: i >= shownWordCount ? 0 : 1,
+                                }}
+                                animate={{ opacity: 1 }}
+                                transition={{ duration: 0.25 }}
+                                style={{ display: "inline" }}
+                              >
+                                {word}
+                              </motion.span>
+                            )
+                          )
+                        ) : (
+                          <span>{message.content}</span>
+                        )}
+                        {isLast && isAI && isChatLoading && <BlinkingCursor />}
+                      </div>
+                    </div>
+                  );
+                })}
+                {isChatLoading && messages.length === 0 && (
+                  <div className="text-white/60 italic">
+                    AI is thinking... <BlinkingCursor />
+                  </div>
+                )}
               </div>
             </motion.form>
           )}
