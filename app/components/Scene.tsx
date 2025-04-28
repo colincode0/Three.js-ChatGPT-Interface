@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -11,7 +11,7 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { motion, AnimatePresence } from "framer-motion";
-import { useChat } from "ai/react";
+import { UseChatHelpers } from "ai/react";
 
 // Pre-create reusable vectors and objects to avoid garbage collection
 const HALF_PI = Math.PI / 2;
@@ -97,7 +97,20 @@ const styles = `
 // Utility to split message into words and spaces
 const splitWordsAndSpaces = (text: string) => text.split(/(\s+)/);
 
-function Scene() {
+interface SceneProps {
+  chatProps: UseChatHelpers;
+}
+
+function Scene({ chatProps }: SceneProps) {
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit: handleChatSubmit,
+    isLoading: isChatLoading,
+    setInput,
+  } = chatProps;
+
   // Pre-create reusable vectors to avoid garbage collection
   const startPositionRef = useRef(new THREE.Vector3());
   const targetPositionRef = useRef(new THREE.Vector3(1.5, 0, 0));
@@ -131,24 +144,6 @@ function Scene() {
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  const {
-    messages,
-    input,
-    handleInputChange,
-    handleSubmit: handleChatSubmit,
-    isLoading: isChatLoading,
-    setInput,
-  } = useChat({
-    api: "/api/chat",
-    onError: (error) => {
-      console.error("Chat error:", error);
-      // You could add a toast notification here if you want
-    },
-    onFinish: () => {
-      // Remove lastWords state, use a single fade-in for the whole message
-    },
-  });
 
   // Auto-scroll chat to bottom on new message
   useEffect(() => {
@@ -228,44 +223,50 @@ function Scene() {
     }
   };
 
-  const handleFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (
-      !cameraRef.current ||
-      !controlsRef.current ||
-      isAnimatingRef.current ||
-      isChatLoading
-    )
-      return;
+  const handleFormSubmit = useCallback(
+    async (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      if (
+        !cameraRef.current ||
+        !controlsRef.current ||
+        isAnimatingRef.current ||
+        isChatLoading
+      )
+        return;
 
-    // Handle chat submission
-    await handleChatSubmit(e);
-    setInput(""); // Clear input after submit
-    // Reset textarea height
-    if (inputRef.current) {
-      inputRef.current.style.height = "auto";
-      inputRef.current.focus();
-    }
-    setHasInteracted(true);
+      try {
+        await handleChatSubmit(e);
+        setInput(""); // Clear input after submit
+        // Reset textarea height
+        if (inputRef.current) {
+          inputRef.current.style.height = "auto";
+          inputRef.current.focus();
+        }
+        setHasInteracted(true);
 
-    // Handle camera movement
-    startPositionRef.current.copy(cameraRef.current.position);
-    getRandomPosition(cameraRef.current.position, tempVector.current);
-    targetPositionRef.current.copy(tempVector.current);
+        // Handle camera movement
+        startPositionRef.current.copy(cameraRef.current.position);
+        getRandomPosition(cameraRef.current.position, tempVector.current);
+        targetPositionRef.current.copy(tempVector.current);
 
-    const moveDirection = tempVector.current
-      .subVectors(targetPositionRef.current, startPositionRef.current)
-      .normalize();
-    const driftSpeed = 0.0002;
-    targetDriftVelocityRef.current.copy(
-      moveDirection.multiplyScalar(driftSpeed)
-    );
-    driftVelocityRef.current.set(0, 0, 0);
+        const moveDirection = tempVector.current
+          .subVectors(targetPositionRef.current, startPositionRef.current)
+          .normalize();
+        const driftSpeed = 0.0002;
+        targetDriftVelocityRef.current.copy(
+          moveDirection.multiplyScalar(driftSpeed)
+        );
+        driftVelocityRef.current.set(0, 0, 0);
 
-    animationProgressRef.current = 0;
-    isAnimatingRef.current = true;
-    setCanInput(false);
-  };
+        animationProgressRef.current = 0;
+        isAnimatingRef.current = true;
+        setCanInput(false);
+      } catch (error) {
+        console.error("Error submitting form:", error);
+      }
+    },
+    [handleChatSubmit, isChatLoading, setInput]
+  );
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -726,49 +727,6 @@ function Scene() {
               exit={{ opacity: 0 }}
               transition={{ duration: 1 }}
             >
-              {messages.length > 0 && (
-                <motion.div
-                  ref={chatBoxRef}
-                  className="w-full max-w-[98vw] sm:max-w-[700px] bg-black/80 text-white rounded-lg border border-white/20 p-4 overflow-y-auto custom-scrollbar text-base sm:text-lg mb-3 mt-4"
-                  style={{ minHeight: 120, maxHeight: "calc(100vh - 9rem)" }}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.7, ease: "easeOut" }}
-                >
-                  {messages.map((message, idx) => {
-                    const isLast = idx === messages.length - 1;
-                    const isAI = message.role === "assistant";
-                    return (
-                      <div key={message.id} className="mb-2">
-                        <div className="font-semibold">
-                          {message.role === "user" ? "You" : "AI"}
-                        </div>
-                        <div
-                          className="text-white/80"
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          {isLast && isAI && isChatLoading ? (
-                            <span>
-                              {message.content}
-                              <span className="animate-blink">|</span>
-                            </span>
-                          ) : (
-                            <span>{message.content}</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {isChatLoading && messages.length === 0 && (
-                    <div className="text-white/60 italic">
-                      AI is thinking...
-                    </div>
-                  )}
-                </motion.div>
-              )}
               <motion.div
                 className="relative w-full max-w-[98vw] sm:max-w-[700px]"
                 initial={{ opacity: 0 }}
