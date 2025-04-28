@@ -325,7 +325,7 @@ function Scene() {
       0.85
     );
     bloomPass.threshold = 0.15;
-    bloomPass.strength = 0.85;
+    bloomPass.strength = 1;
     bloomPass.radius = 0.8;
     bloomPass.enabled = true;
     composer.addPass(bloomPass);
@@ -395,9 +395,9 @@ function Scene() {
               object.material.flatShading = true;
               object.material.needsUpdate = true;
               // Optimize material settings
-              object.material.roughness = 0.5;
-              object.material.metalness = 0.5;
-              object.material.envMapIntensity = 1.0;
+              object.material.roughness = 0.1;
+              object.material.metalness = 0.3;
+              object.material.envMapIntensity = 2.0;
             }
           }
         });
