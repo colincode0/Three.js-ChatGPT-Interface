@@ -94,9 +94,6 @@ const styles = `
   }
 `;
 
-// Utility to split message into words and spaces
-const splitWordsAndSpaces = (text: string) => text.split(/(\s+)/);
-
 function Scene() {
   // Pre-create reusable vectors to avoid garbage collection
   const startPositionRef = useRef(new THREE.Vector3());
@@ -109,6 +106,8 @@ function Scene() {
   const [isLoading, setIsLoading] = useState(true);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
+  const [canInput, setCanInput] = useState(true);
+  const [hasInteracted, setHasInteracted] = useState(false);
 
   // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -143,58 +142,6 @@ function Scene() {
       // Remove lastWords state, use a single fade-in for the whole message
     },
   });
-
-  // Buffer for smooth fade-in
-  const [displayedWords, setDisplayedWords] = useState<string[]>([]);
-  const [buffer, setBuffer] = useState<string[]>([]);
-  const prevMsgId = useRef<string | null>(null);
-  const fadeInterval = useRef<NodeJS.Timeout | null>(null);
-
-  // Track when movement is finished
-  const [canInput, setCanInput] = useState(true);
-
-  // Track if user has interacted (submitted) at least once
-  const [hasInteracted, setHasInteracted] = useState(false);
-
-  useEffect(() => {
-    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-    if (lastMsg && lastMsg.role === "assistant" && isChatLoading) {
-      const words = splitWordsAndSpaces(lastMsg.content);
-      // If new message, reset
-      if (prevMsgId.current !== lastMsg.id) {
-        setDisplayedWords([]);
-        setBuffer(words);
-        prevMsgId.current = lastMsg.id;
-      } else {
-        // Add new words to buffer
-        if (words.length > displayedWords.length + buffer.length) {
-          setBuffer(words.slice(displayedWords.length + buffer.length));
-        }
-      }
-    } else {
-      setDisplayedWords([]);
-      setBuffer([]);
-      prevMsgId.current = null;
-      if (fadeInterval.current) clearInterval(fadeInterval.current);
-    }
-  }, [messages, isChatLoading]);
-
-  // Release words from buffer at a steady pace
-  useEffect(() => {
-    if (buffer.length > 0) {
-      if (fadeInterval.current) clearInterval(fadeInterval.current);
-      fadeInterval.current = setInterval(() => {
-        setDisplayedWords((words) => [...words, buffer[0]]);
-        setBuffer((buf) => buf.slice(1));
-      }, 55); // Adjust speed here (ms per word)
-      return () => {
-        if (fadeInterval.current) clearInterval(fadeInterval.current);
-      };
-    } else {
-      if (fadeInterval.current) clearInterval(fadeInterval.current);
-      return () => {};
-    }
-  }, [buffer]);
 
   // Auto-scroll chat to bottom on new message
   useEffect(() => {
@@ -757,15 +704,10 @@ function Scene() {
                           }}
                         >
                           {isLast && isAI && isChatLoading ? (
-                            <motion.span
-                              key={message.content}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ duration: 0.25, ease: "easeOut" }}
-                              style={{ display: "inline" }}
-                            >
+                            <span>
                               {message.content}
-                            </motion.span>
+                              <span className="animate-blink">|</span>
+                            </span>
                           ) : (
                             <span>{message.content}</span>
                           )}
