@@ -295,10 +295,18 @@ function Scene() {
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: "high-performance",
-      precision: "mediump",
+      precision: "highp",
+      stencil: false,
+      depth: true,
+      alpha: false,
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = false;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -316,9 +324,10 @@ function Scene() {
       0.8,
       0.85
     );
-    bloomPass.threshold = 0.2;
-    bloomPass.strength = 1.2;
-    bloomPass.radius = 0.75;
+    bloomPass.threshold = 0.15;
+    bloomPass.strength = 0.85;
+    bloomPass.radius = 0.8;
+    bloomPass.enabled = true;
     composer.addPass(bloomPass);
 
     // Lighting
@@ -355,7 +364,12 @@ function Scene() {
     controls.target.set(0, 0, 0);
     controls.update();
 
-    // Model loading
+    // Performance optimizations
+    // Pre-allocate vectors and objects to avoid garbage collection
+    const tempVector1 = new THREE.Vector3();
+    const tempVector2 = new THREE.Vector3();
+
+    // Optimize model loading
     const loader = new GLTFLoader();
     loader.load(
       "/3d/brain/scene.gltf",
@@ -367,6 +381,26 @@ function Scene() {
         const box = new THREE.Box3().setFromObject(model);
         box.getCenter(tempVector.current);
         model.position.sub(tempVector.current);
+
+        // Optimize model materials
+        model.traverse((object) => {
+          if (object instanceof THREE.Mesh) {
+            // Optimize geometry
+            object.geometry.computeBoundingSphere();
+            object.geometry.computeBoundingBox();
+
+            // Optimize materials
+            if (object.material instanceof THREE.MeshStandardMaterial) {
+              object.material.side = THREE.FrontSide;
+              object.material.flatShading = true;
+              object.material.needsUpdate = true;
+              // Optimize material settings
+              object.material.roughness = 0.5;
+              object.material.metalness = 0.5;
+              object.material.envMapIntensity = 1.0;
+            }
+          }
+        });
 
         scene.add(model);
 
@@ -445,13 +479,17 @@ function Scene() {
       }
     );
 
-    // Optimized animation loop with time smoothing
+    // Optimize animation loop with time smoothing
     let lastFrameTime = 0;
     const frameTimeBuffer: number[] = new Array(10).fill(16.67);
     let frameTimeIndex = 0;
+    let isAnimating = false;
 
     const animate = (currentTime: number) => {
-      requestAnimationFrame(animate);
+      if (!isAnimating) {
+        requestAnimationFrame(animate);
+        return;
+      }
 
       // Smooth frame time calculation
       const rawDeltaTime = currentTime - lastFrameTime;
@@ -494,11 +532,10 @@ function Scene() {
           chromaticPassRef.current.uniforms.opacity.value = chromaticOpacity;
         }
 
-        camera.position.lerpVectors(
-          startPositionRef.current,
-          targetPositionRef.current,
-          easedProgress
-        );
+        // Use pre-allocated vectors for position calculations
+        tempVector1.copy(startPositionRef.current);
+        tempVector2.copy(targetPositionRef.current);
+        camera.position.lerpVectors(tempVector1, tempVector2, easedProgress);
       } else if (
         !isAnimatingRef.current &&
         chromaticPassRef.current?.uniforms?.opacity
@@ -569,8 +606,12 @@ function Scene() {
 
       controls.update();
       composer.render();
+
+      requestAnimationFrame(animate);
     };
 
+    // Start animation loop
+    isAnimating = true;
     animate(0);
 
     // Optimized resize handler with debounce
@@ -598,6 +639,7 @@ function Scene() {
 
     // Cleanup
     return () => {
+      isAnimating = false;
       window.removeEventListener("resize", handleResize);
       if (containerRef.current && renderer.domElement) {
         containerRef.current.removeChild(renderer.domElement);
