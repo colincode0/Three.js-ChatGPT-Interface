@@ -69,6 +69,29 @@ const styles = `
       stroke-dashoffset: 80;
     }
   }
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #333 #222;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #333;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #222;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  .animate-blink {
+    display: inline-block;
+    width: 1ch;
+    animation: blink 1s steps(1) infinite;
+  }
 `;
 
 // Utility to split message into words and spaces
@@ -101,6 +124,7 @@ function Scene() {
   const driftStartTimeRef = useRef(0);
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const {
     messages,
@@ -125,6 +149,12 @@ function Scene() {
   const [buffer, setBuffer] = useState<string[]>([]);
   const prevMsgId = useRef<string | null>(null);
   const fadeInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Track when movement is finished
+  const [canInput, setCanInput] = useState(true);
+
+  // Track if user has interacted (submitted) at least once
+  const [hasInteracted, setHasInteracted] = useState(false);
 
   useEffect(() => {
     const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -173,6 +203,13 @@ function Scene() {
     }
   }, [messages]);
 
+  // Auto-focus input when canInput becomes true after interaction
+  useEffect(() => {
+    if (canInput && hasInteracted && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [canInput, hasInteracted]);
+
   const handleFirstClick = () => {
     if (!hasStarted) {
       if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
@@ -210,6 +247,12 @@ function Scene() {
     // Handle chat submission
     await handleChatSubmit(e);
     setInput(""); // Clear input after submit
+    // Reset textarea height
+    if (inputRef.current) {
+      inputRef.current.style.height = "auto";
+      inputRef.current.focus();
+    }
+    setHasInteracted(true);
 
     // Handle camera movement
     startPositionRef.current.copy(cameraRef.current.position);
@@ -227,6 +270,7 @@ function Scene() {
 
     animationProgressRef.current = 0;
     isAnimatingRef.current = true;
+    setCanInput(false);
   };
 
   useEffect(() => {
@@ -424,6 +468,10 @@ function Scene() {
           driftStartTimeRef.current = performance.now();
           driftVelocityRef.current.set(0, 0, 0);
           animationProgressRef.current = 1;
+          // Allow input again after movement is finished
+          setTimeout(() => {
+            setCanInput(true);
+          }, 200); // small delay for smoothness
         }
 
         const t = animationProgressRef.current;
@@ -571,33 +619,7 @@ function Scene() {
 
   return (
     <>
-      <style>{`
-        ${styles}
-        /* Custom scrollbar for chat box */
-        .custom-scrollbar {
-          scrollbar-width: thin;
-          scrollbar-color: #b0b0b0 #222;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 10px;
-          height: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #b0b0b0;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: #222;
-        }
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
-        }
-        .animate-blink {
-          display: inline-block;
-          width: 1ch;
-          animation: blink 1s steps(1) infinite;
-        }
-      `}</style>
+      <style>{styles}</style>
       <div className="fixed inset-0 w-full h-full">
         <motion.div
           ref={containerRef}
@@ -671,8 +693,8 @@ function Scene() {
               {messages.length > 0 && (
                 <motion.div
                   ref={chatBoxRef}
-                  className="w-full max-w-[98vw] sm:max-w-[700px] bg-black/80 text-white rounded-lg border border-white/20 p-4 max-h-[calc(100vh-9rem)] overflow-y-auto custom-scrollbar text-base sm:text-lg mb-3"
-                  style={{ minHeight: 120 }}
+                  className="w-full max-w-[98vw] sm:max-w-[700px] bg-black/80 text-white rounded-lg border border-white/20 p-4 overflow-y-auto custom-scrollbar text-base sm:text-lg mb-3 mt-4"
+                  style={{ minHeight: 120, maxHeight: "calc(100vh - 8rem)" }}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.7, ease: "easeOut" }}
@@ -727,9 +749,15 @@ function Scene() {
                     value={input}
                     onChange={handleInputChange}
                     onClick={handleFirstClick}
-                    className="bg-black/80 text-white px-4 py-2 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-hidden min-h-[40px] max-h-[200px] text-base sm:text-lg"
-                    rows={1}
-                    disabled={isChatLoading}
+                    ref={inputRef}
+                    className="bg-black/80 text-white px-4 py-3 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-y-auto h-[83px] max-h-[83px] leading-normal text-base sm:text-lg align-top"
+                    rows={2}
+                    disabled={isChatLoading || !canInput}
+                    placeholder={
+                      !canInput && hasInteracted
+                        ? "Responding..."
+                        : "Type something..."
+                    }
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
@@ -744,26 +772,10 @@ function Scene() {
                       }
                     }}
                     onInput={(e) => {
-                      const target = e.target as HTMLTextAreaElement;
-                      target.style.height = "auto";
-                      target.style.height = `${target.scrollHeight}px`;
+                      const target = e.currentTarget;
+                      target.scrollTop = target.scrollHeight;
                     }}
                   />
-                  <AnimatePresence mode="wait">
-                    {input.length === 0 && (
-                      <motion.span
-                        key={isChatLoading ? "responding" : "placeholder"}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className="absolute left-0 top-0 w-full h-full flex items-center px-4 py-2 text-white/60 pointer-events-none select-none text-base sm:text-lg"
-                        style={{ zIndex: 1 }}
-                      >
-                        {isChatLoading ? "Responding..." : "Type something..."}
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
                 </div>
                 <motion.button
                   type="submit"
