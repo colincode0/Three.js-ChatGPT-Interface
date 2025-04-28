@@ -8,6 +8,7 @@ export default function OverlayCube() {
     // Create overlay div if it doesn't exist
     let container = document.getElementById("overlay-cube-canvas");
     if (!container) {
+      container = document.createElement("div");
       container.id = "overlay-cube-canvas";
       container.style.position = "absolute";
       container.style.inset = "0";
