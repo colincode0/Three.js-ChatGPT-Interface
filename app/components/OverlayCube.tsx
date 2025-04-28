@@ -1,7 +1,14 @@
 import { useEffect } from "react";
 import * as THREE from "three";
-import { TextGeometry } from "three/examples/jsm/geometries/TextGeometry.js";
+import {
+  TextGeometry,
+  TextGeometryParameters,
+} from "three/examples/jsm/geometries/TextGeometry.js";
 import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
+
+interface ExtendedTextGeometryParameters extends TextGeometryParameters {
+  height: number;
+}
 
 export default function OverlayCube() {
   useEffect(() => {
@@ -50,7 +57,7 @@ export default function OverlayCube() {
           bevelThickness: 0.01,
           bevelSize: 0.005,
           bevelSegments: 3,
-        });
+        } as ExtendedTextGeometryParameters);
 
       const textGeometry = createTextGeometry();
 
