@@ -694,7 +694,7 @@ function Scene() {
                 <motion.div
                   ref={chatBoxRef}
                   className="w-full max-w-[98vw] sm:max-w-[700px] bg-black/80 text-white rounded-lg border border-white/20 p-4 overflow-y-auto custom-scrollbar text-base sm:text-lg mb-3 mt-4"
-                  style={{ minHeight: 120, maxHeight: "calc(100vh - 8rem)" }}
+                  style={{ minHeight: 120, maxHeight: "calc(100vh - 9rem)" }}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.7, ease: "easeOut" }}
