@@ -94,6 +94,9 @@ const styles = `
   }
 `;
 
+// Utility to split message into words and spaces
+const splitWordsAndSpaces = (text: string) => text.split(/(\s+)/);
+
 function Scene() {
   // Pre-create reusable vectors to avoid garbage collection
   const startPositionRef = useRef(new THREE.Vector3());
@@ -108,6 +111,10 @@ function Scene() {
   const [hasStarted, setHasStarted] = useState(false);
   const [canInput, setCanInput] = useState(true);
   const [hasInteracted, setHasInteracted] = useState(false);
+  const [displayedWords, setDisplayedWords] = useState<string[]>([]);
+  const [buffer, setBuffer] = useState<string[]>([]);
+  const prevMsgId = useRef<string | null>(null);
+  const fadeInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -156,6 +163,46 @@ function Scene() {
       inputRef.current.focus();
     }
   }, [canInput, hasInteracted]);
+
+  useEffect(() => {
+    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+    if (lastMsg && lastMsg.role === "assistant" && isChatLoading) {
+      const words = splitWordsAndSpaces(lastMsg.content);
+      // If new message, reset
+      if (prevMsgId.current !== lastMsg.id) {
+        setDisplayedWords([]);
+        setBuffer(words);
+        prevMsgId.current = lastMsg.id;
+      } else {
+        // Add new words to buffer
+        if (words.length > displayedWords.length + buffer.length) {
+          setBuffer(words.slice(displayedWords.length + buffer.length));
+        }
+      }
+    } else {
+      setDisplayedWords([]);
+      setBuffer([]);
+      prevMsgId.current = null;
+      if (fadeInterval.current) clearInterval(fadeInterval.current);
+    }
+  }, [messages, isChatLoading]);
+
+  // Release words from buffer at a steady pace
+  useEffect(() => {
+    if (buffer.length > 0) {
+      if (fadeInterval.current) clearInterval(fadeInterval.current);
+      fadeInterval.current = setInterval(() => {
+        setDisplayedWords((words) => [...words, buffer[0]]);
+        setBuffer((buf) => buf.slice(1));
+      }, 20); // Even faster word release
+      return () => {
+        if (fadeInterval.current) clearInterval(fadeInterval.current);
+      };
+    } else {
+      if (fadeInterval.current) clearInterval(fadeInterval.current);
+      return () => {};
+    }
+  }, [buffer]);
 
   const handleFirstClick = () => {
     if (!hasStarted) {
