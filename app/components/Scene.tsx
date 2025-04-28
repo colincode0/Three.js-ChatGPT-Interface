@@ -109,6 +109,12 @@ function Scene() {
   const [isLoading, setIsLoading] = useState(true);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
+  const [canInput, setCanInput] = useState(true);
+  const [hasInteracted, setHasInteracted] = useState(false);
+  const [displayedWords, setDisplayedWords] = useState<string[]>([]);
+  const [buffer, setBuffer] = useState<string[]>([]);
+  const prevMsgId = useRef<string | null>(null);
+  const fadeInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -144,17 +150,19 @@ function Scene() {
     },
   });
 
-  // Buffer for smooth fade-in
-  const [displayedWords, setDisplayedWords] = useState<string[]>([]);
-  const [buffer, setBuffer] = useState<string[]>([]);
-  const prevMsgId = useRef<string | null>(null);
-  const fadeInterval = useRef<NodeJS.Timeout | null>(null);
+  // Auto-scroll chat to bottom on new message
+  useEffect(() => {
+    if (chatBoxRef.current) {
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+    }
+  }, [messages]);
 
-  // Track when movement is finished
-  const [canInput, setCanInput] = useState(true);
-
-  // Track if user has interacted (submitted) at least once
-  const [hasInteracted, setHasInteracted] = useState(false);
+  // Auto-focus input when canInput becomes true after interaction
+  useEffect(() => {
+    if (canInput && hasInteracted && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [canInput, hasInteracted]);
 
   useEffect(() => {
     const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -186,7 +194,7 @@ function Scene() {
       fadeInterval.current = setInterval(() => {
         setDisplayedWords((words) => [...words, buffer[0]]);
         setBuffer((buf) => buf.slice(1));
-      }, 55); // Adjust speed here (ms per word)
+      }, 20); // Even faster word release
       return () => {
         if (fadeInterval.current) clearInterval(fadeInterval.current);
       };
@@ -195,20 +203,6 @@ function Scene() {
       return () => {};
     }
   }, [buffer]);
-
-  // Auto-scroll chat to bottom on new message
-  useEffect(() => {
-    if (chatBoxRef.current) {
-      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
-    }
-  }, [messages]);
-
-  // Auto-focus input when canInput becomes true after interaction
-  useEffect(() => {
-    if (canInput && hasInteracted && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [canInput, hasInteracted]);
 
   const handleFirstClick = () => {
     if (!hasStarted) {
@@ -757,15 +751,10 @@ function Scene() {
                           }}
                         >
                           {isLast && isAI && isChatLoading ? (
-                            <motion.span
-                              key={message.content}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ duration: 0.25, ease: "easeOut" }}
-                              style={{ display: "inline" }}
-                            >
+                            <span>
                               {message.content}
-                            </motion.span>
+                              <span className="animate-blink">|</span>
+                            </span>
                           ) : (
                             <span>{message.content}</span>
                           )}
