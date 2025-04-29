@@ -544,6 +544,12 @@ export default function OverlayCube({
           // Gentle floating motion
           currentMesh.position.y += Math.sin(time) * 0.0001;
 
+          // Add gentle back-and-forth rotation
+          const rotationSpeed = 0.15; // Even slower for more fluid motion
+          const rotationAmount = 0.08; // Slightly more rotation (about 4.6 degrees)
+          currentMesh.rotation.y =
+            Math.sin(time * rotationSpeed) * rotationAmount;
+
           // Update environment map periodically for dynamic reflections
           if (Math.floor(time * 10) % 30 === 0) {
             currentMesh.visible = false;
