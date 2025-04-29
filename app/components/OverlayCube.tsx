@@ -145,10 +145,26 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         const delta = event.deltaY * scrollSpeed;
         const currentPos = textGroupRef.current.position.y;
 
-        // Calculate boundaries
-        const bottomY = 1.0; // Starting position
-        // Adjust topY to account for full text height plus a small buffer
-        const topY = 1.0 + maxScrollRef.current * 0.8; // Increased multiplier to see more text
+        // Calculate boundaries with adaptive scaling
+        const bottomY = 1.0; // Starting position stays fixed
+
+        // Calculate adaptive multiplier based on text height
+        // For shorter text (less than 2.0 units), use a smaller multiplier
+        // For longer text, gradually increase the multiplier
+        const baseMultiplier = 0.3; // Base multiplier for short text
+        const heightThreshold = 2.0; // Threshold to determine "long" text
+        let adaptiveMultiplier;
+
+        if (maxScrollRef.current <= heightThreshold) {
+          // Short text: use base multiplier
+          adaptiveMultiplier = baseMultiplier;
+        } else {
+          // Long text: gradually increase multiplier based on length
+          const extraHeight = maxScrollRef.current - heightThreshold;
+          adaptiveMultiplier = baseMultiplier + extraHeight * 0.15;
+        }
+
+        const topY = bottomY + maxScrollRef.current * adaptiveMultiplier;
 
         // Calculate new position (add delta)
         let newPosition = currentPos + delta;
@@ -167,7 +183,8 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
           topY,
           bottomY,
           totalHeight: maxScrollRef.current,
-          textLines: maxScrollRef.current / (0.1 * 1.4), // fontSize * lineSpacing
+          adaptiveMultiplier,
+          textLines: maxScrollRef.current / (0.1 * 1.4),
           direction: event.deltaY > 0 ? "scrolling down" : "scrolling up",
         });
       }
@@ -327,7 +344,6 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
 
         group.position.z = 0;
         group.position.y = 1.0; // Start at initial position
-        group.rotation.x = -0.1;
 
         return group;
       };
