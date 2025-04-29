@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import * as THREE from "three";
 import {
   TextGeometry,
@@ -64,10 +64,62 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
 
 export default function OverlayCube({ chatProps }: OverlayCubeProps) {
   const { messages, isLoading: isChatLoading } = chatProps;
-  const [currentText, setCurrentText] = useState("Welcome");
+  const [currentText, setCurrentText] = useState("");
   const [updateTextFn, setUpdateTextFn] = useState<
     ((text: string) => void) | null
   >(null);
+  const textGroupRef = useRef<THREE.Group | null>(null);
+  const scrollPositionRef = useRef(0);
+  const maxScrollRef = useRef(0);
+
+  // Create shader materials
+  const materials = useMemo(() => {
+    // Vertex shader
+    const vertexShader = `
+      varying vec2 vUv;
+      varying vec4 vPosition;
+      void main() {
+        vUv = uv;
+        vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
+        vPosition = projectionMatrix * modelViewPosition;
+        gl_Position = vPosition;
+      }
+    `;
+
+    // Fragment shader with fade effect
+    const fragmentShader = `
+      varying vec2 vUv;
+      varying vec4 vPosition;
+      uniform vec3 color;
+
+      void main() {
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `;
+
+    // Create materials
+    const textMaterial = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms: {
+        color: { value: new THREE.Color(0xffffff) },
+      },
+      transparent: true,
+      side: THREE.DoubleSide,
+    });
+
+    const strokeMaterial = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms: {
+        color: { value: new THREE.Color(0x000000) },
+      },
+      transparent: true,
+      side: THREE.DoubleSide,
+    });
+
+    return { textMaterial, strokeMaterial };
+  }, []);
 
   // Update text when messages change and loading is complete
   useEffect(() => {
@@ -76,6 +128,63 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
       if (lastMessage.role === "assistant") {
         console.log("Original message:", lastMessage.content);
         setCurrentText(lastMessage.content);
+        // Reset scroll position when new message arrives
+        scrollPositionRef.current = 0;
+        if (textGroupRef.current) {
+          textGroupRef.current.position.y = 0; // Reset to initial position
+        }
+      }
+    }
+  }, [messages, isChatLoading]);
+
+  // Update scroll handler with corrected boundaries
+  useEffect(() => {
+    const handleWheel = (event: WheelEvent) => {
+      if (textGroupRef.current) {
+        const scrollSpeed = 0.001;
+        const delta = event.deltaY * scrollSpeed;
+        const currentPos = textGroupRef.current.position.y;
+
+        // Calculate scroll boundaries
+        const startY = 1.0; // Match the startY from createTextMesh
+        const topLimit = startY; // Can't scroll above starting position
+        const bottomLimit = startY - maxScrollRef.current; // Can scroll down by total height
+
+        // Add delta directly (natural scroll direction)
+        let newPosition = currentPos + delta;
+
+        // Clamp the new position to boundaries
+        newPosition = Math.max(Math.min(newPosition, topLimit), bottomLimit);
+
+        // Only update if position changed
+        if (newPosition !== currentPos) {
+          textGroupRef.current.position.y = newPosition;
+          scrollPositionRef.current = newPosition;
+        }
+
+        // Debug logging
+        console.log({
+          currentPos,
+          newPosition,
+          delta,
+          topLimit,
+          bottomLimit,
+          scrollHeight: maxScrollRef.current,
+          startY,
+        });
+      }
+    };
+
+    window.addEventListener("wheel", handleWheel);
+    return () => window.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  // Update reset position logic
+  useEffect(() => {
+    if (messages.length > 0 && !isChatLoading) {
+      if (textGroupRef.current) {
+        textGroupRef.current.position.y = 1.0; // Reset to top position
+        scrollPositionRef.current = 1.0;
       }
     }
   }, [messages, isChatLoading]);
@@ -96,17 +205,39 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
       container.style.inset = "0";
       container.style.pointerEvents = "none";
       container.style.zIndex = "50";
+
+      // Add semi-transparent background div
+      const backgroundDiv = document.createElement("div");
+      backgroundDiv.style.position = "absolute";
+      backgroundDiv.style.left = "50%";
+      backgroundDiv.style.top = "50%";
+      backgroundDiv.style.transform = "translate(-50%, -50%)";
+      backgroundDiv.style.width = "80%";
+      backgroundDiv.style.maxWidth = "700px";
+      backgroundDiv.style.height = "60%";
+      backgroundDiv.style.backgroundColor = "rgba(0, 0, 0, 0.8)";
+      backgroundDiv.style.border = "1px solid rgba(255, 255, 255, 0.2)";
+      backgroundDiv.style.zIndex = "1";
+
+      container.appendChild(backgroundDiv);
+
       document.body.appendChild(container);
     }
 
     const scene = new THREE.Scene();
+
+    // Calculate camera parameters based on div dimensions
+    const divHeight = window.innerHeight * 0.6; // 60% of viewport height
+    const divWidth = Math.min(window.innerWidth * 0.8, 700); // 80% of viewport width, max 700px
+    const aspect = divWidth / divHeight;
+
     const camera = new THREE.PerspectiveCamera(
-      75,
-      window.innerWidth / window.innerHeight,
+      50, // Reduced FOV for better text containment
+      aspect,
       0.1,
       1000
     );
-    camera.position.z = 4;
+    camera.position.z = 3; // Moved camera closer
 
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -114,10 +245,15 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
       powerPreference: "high-performance",
     });
     renderer.setClearColor(0x000000, 0);
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(divWidth, divHeight); // Set renderer size to match div
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.domElement.style.position = "absolute";
+    renderer.domElement.style.left = "50%";
+    renderer.domElement.style.top = "50%";
+    renderer.domElement.style.transform = "translate(-50%, -50%)";
+    renderer.domElement.style.zIndex = "2";
 
     container.appendChild(renderer.domElement);
 
@@ -135,109 +271,69 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
       let currentMesh: THREE.Group | null = null;
 
       const createTextMesh = (text: string) => {
-        console.log("Creating text mesh for:", text);
         const group = new THREE.Group();
+        textGroupRef.current = group;
 
-        // Format settings
         const maxCharsPerLine = 38;
-        const fontSize = 0.13;
+        const fontSize = 0.1;
         const lineSpacing = 1.4;
 
-        console.log("Text settings:", {
-          maxCharsPerLine,
-          fontSize,
-          lineSpacing,
-        });
-
-        // Process text into wrapped lines
         const lines = wrapText(text, maxCharsPerLine);
-        console.log("Total number of lines:", lines.length);
-
-        // Calculate total height of text block
+        // Calculate total height based on number of lines
         const totalHeight = (lines.length - 1) * (fontSize * lineSpacing);
+        maxScrollRef.current = totalHeight;
 
-        // Adjust starting position based on total height
-        // Move text up so the first line starts near the top of the view
-        const startY = totalHeight * 0.8; // This will push text up
+        // Start position should be at the top of the viewport
+        const startY = 1.0; // Adjust this value to position text at top of viewport
 
-        console.log("Text block dimensions:", {
-          totalHeight,
-          startY,
-          numberOfLines: lines.length,
-        });
-
-        // Create geometries for each line
-        lines.forEach((line, index) => {
-          const textGeometry = new TextGeometry(line, {
+        // Calculate the maximum width for left alignment
+        let maxWidth = 0;
+        const geometries = lines.map((line) => {
+          const geometry = new TextGeometry(line, {
             font: font,
             size: fontSize,
-            height: 0.05,
-            curveSegments: 6,
-            bevelEnabled: false,
+            height: 0.02,
+            curveSegments: 4,
+            bevelEnabled: true,
+            bevelThickness: 0.01,
+            bevelSize: 0.008,
+            bevelSegments: 5,
           } as ExtendedTextGeometryParameters);
+          geometry.computeBoundingBox();
+          const width =
+            geometry.boundingBox!.max.x - geometry.boundingBox!.min.x;
+          maxWidth = Math.max(maxWidth, width);
+          return geometry;
+        });
 
-          textGeometry.computeBoundingBox();
+        // Left align position
+        const leftAlignX = -maxWidth / 2;
 
-          // Calculate horizontal centering
-          const textWidth =
-            textGeometry.boundingBox!.max.x - textGeometry.boundingBox!.min.x;
-          const centerX = -textWidth / 2;
+        lines.forEach((line, index) => {
+          const textGeometry = geometries[index];
+          // Position lines going down (negative Y) from the start position
           const lineY = startY - index * fontSize * lineSpacing;
 
-          console.log(`Line ${index + 1}:`, {
-            text: line,
-            width: textWidth,
-            centerX,
-            lineY,
-          });
-
-          // Create stroke effect
-          const strokeMaterial = new THREE.MeshBasicMaterial({
-            color: 0x000000,
-          });
-          const textMaterial = new THREE.MeshPhongMaterial({
+          const textMaterial = new THREE.MeshPhysicalMaterial({
             color: 0xffffff,
-            emissive: 0xffffff,
-            emissiveIntensity: 0.4,
-            shininess: 100,
-            flatShading: false,
+            metalness: 0.6,
+            roughness: 0.2,
+            reflectivity: 1.0,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.1,
+            flatShading: true,
+            envMapIntensity: 1.5,
           });
 
-          // Create stroke meshes in 8 directions
-          const strokeOffsets = [
-            [-1, 1],
-            [0, 1],
-            [1, 1],
-            [-1, 0],
-            [1, 0],
-            [-1, -1],
-            [0, -1],
-            [1, -1],
-          ];
-
-          const strokeSize = 0.003;
-
-          strokeOffsets.forEach(([x, y]) => {
-            const strokeMesh = new THREE.Mesh(textGeometry, strokeMaterial);
-            strokeMesh.position.set(
-              centerX + x * strokeSize,
-              lineY + y * strokeSize,
-              -0.001
-            );
-            strokeMesh.castShadow = true;
-            group.add(strokeMesh);
-          });
-
-          // Main text mesh
           const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-          textMesh.position.set(centerX, lineY, 0);
+          textMesh.position.set(leftAlignX, lineY, 0);
           textMesh.castShadow = true;
+          textMesh.receiveShadow = true;
           group.add(textMesh);
         });
 
-        // Position the entire group
-        group.position.z = 0.5;
-        group.position.y = 0.6; // Move the entire group up more
+        group.position.z = 0;
+        group.position.y = startY; // Start at the top position
         group.rotation.x = -0.1;
 
         return group;
@@ -263,31 +359,40 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
       // Create initial text mesh
       updateText(currentText);
 
-      // Lighting adjustments with shadows
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      // Set initial position
+      if (textGroupRef.current) {
+        textGroupRef.current.position.y = 0;
+      }
+
+      // Create environment map for reflections
+      const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256);
+      const cubeCamera = new THREE.CubeCamera(0.1, 10, cubeRenderTarget);
+      scene.environment = cubeRenderTarget.texture;
+
+      // Lighting adjustments for shimmery appearance
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
       scene.add(ambientLight);
 
-      const mainLight = new THREE.DirectionalLight(0xffffff, 1.8);
-      mainLight.position.set(2, 2, 2);
+      const mainLight = new THREE.DirectionalLight(0xffffff, 2.0);
+      mainLight.position.set(2, 2, 1);
       mainLight.castShadow = true;
       mainLight.shadow.mapSize.width = 1024;
       mainLight.shadow.mapSize.height = 1024;
-      mainLight.shadow.camera.near = 0.1;
-      mainLight.shadow.camera.far = 10;
-      mainLight.shadow.camera.left = -5;
-      mainLight.shadow.camera.right = 5;
-      mainLight.shadow.camera.top = 5;
-      mainLight.shadow.camera.bottom = -5;
-      mainLight.shadow.bias = -0.001;
       scene.add(mainLight);
 
-      const fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      fillLight.position.set(-2, -2, 2);
-      scene.add(fillLight);
+      // Add moving lights for shimmer effect
+      const movingLight1 = new THREE.PointLight(0xffffff, 1.0, 10);
+      movingLight1.position.set(2, 0, 2);
+      scene.add(movingLight1);
 
-      const topLight = new THREE.DirectionalLight(0xffffff, 0.6);
-      topLight.position.set(0, 5, 1);
-      scene.add(topLight);
+      const movingLight2 = new THREE.PointLight(0xffffff, 1.0, 10);
+      movingLight2.position.set(-2, 0, 2);
+      scene.add(movingLight2);
+
+      // Subtle rim light
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.7);
+      rimLight.position.set(0, 0, -1);
+      scene.add(rimLight);
 
       // Animation
       let running = true;
@@ -298,11 +403,25 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
 
         time += 0.01;
 
+        // Animate moving lights
+        if (movingLight1 && movingLight2) {
+          movingLight1.position.x = Math.sin(time * 0.5) * 3;
+          movingLight1.position.y = Math.cos(time * 0.5) * 2;
+
+          movingLight2.position.x = -Math.sin(time * 0.7) * 3;
+          movingLight2.position.y = -Math.cos(time * 0.7) * 2;
+        }
+
         if (currentMesh) {
-          // Gentle left-right panning motion
-          currentMesh.rotation.y = Math.sin(time * 0.5) * 0.1;
-          // Subtle floating motion
+          // Gentle floating motion
           currentMesh.position.y += Math.sin(time) * 0.0001;
+
+          // Update environment map periodically for dynamic reflections
+          if (Math.floor(time * 10) % 30 === 0) {
+            currentMesh.visible = false;
+            cubeCamera.update(renderer, scene);
+            currentMesh.visible = true;
+          }
         }
 
         renderer.render(scene, camera);
@@ -310,13 +429,20 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
       }
       animate();
 
-      // Handle resize
+      // Update resize handler
       function handleResize() {
-        camera.aspect = window.innerWidth / window.innerHeight;
+        const newDivHeight = window.innerHeight * 0.6;
+        const newDivWidth = Math.min(window.innerWidth * 0.8, 700);
+        const newAspect = newDivWidth / newDivHeight;
+
+        camera.aspect = newAspect;
         camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setSize(newDivWidth, newDivHeight);
       }
       window.addEventListener("resize", handleResize);
+
+      // Enable clipping in the renderer
+      renderer.localClippingEnabled = true;
 
       // Cleanup
       return () => {
@@ -342,7 +468,7 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         container.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [materials]);
 
   return null;
 }
