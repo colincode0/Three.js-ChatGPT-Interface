@@ -232,9 +232,19 @@ function Scene({ chatProps }: SceneProps) {
       getRandomPosition(cameraRef.current.position, tempVector.current);
       targetPositionRef.current.copy(tempVector.current);
 
+      // For first click, start drifting immediately
+      const moveDirection = new THREE.Vector3()
+        .subVectors(targetPositionRef.current, startPositionRef.current)
+        .normalize();
+      const driftSpeed = 0.0002;
+      targetDriftVelocityRef.current.copy(
+        moveDirection.multiplyScalar(driftSpeed)
+      );
+
       animationProgressRef.current = 0;
       isAnimatingRef.current = true;
-      isDriftingRef.current = false; // Ensure drift is off during initial movement
+      isDriftingRef.current = true; // Start drifting immediately for first click
+      driftStartTimeRef.current = performance.now();
       setHasStarted(true);
     }
   };
@@ -487,7 +497,8 @@ function Scene({ chatProps }: SceneProps) {
       if (!running) return;
 
       if (isAnimatingRef.current && cameraRef.current) {
-        animationProgressRef.current += 0.006;
+        // 0.003 * 1.3 = 0.0039 for 30% faster movement
+        animationProgressRef.current += 0.003;
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
