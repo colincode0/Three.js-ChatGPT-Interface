@@ -111,14 +111,14 @@ function Scene({ chatProps }: SceneProps) {
     setInput,
   } = chatProps;
 
-  // Pre-create reusable vectors to avoid garbage collection
+  // Pre-create reusable vectors and objects to avoid garbage collection
   const startPositionRef = useRef(new THREE.Vector3());
   const targetPositionRef = useRef(new THREE.Vector3(1.5, 0, 0));
   const driftVelocityRef = useRef(new THREE.Vector3());
   const targetDriftVelocityRef = useRef(new THREE.Vector3());
   const idealPosition = useRef(new THREE.Vector3());
   const tempVector = useRef(new THREE.Vector3());
-  const chromaticPassRef = useRef<ShaderPass | null>(null);
+  const isDriftingRef = useRef(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
@@ -128,6 +128,8 @@ function Scene({ chatProps }: SceneProps) {
   const [buffer, setBuffer] = useState<string[]>([]);
   const prevMsgId = useRef<string | null>(null);
   const fadeInterval = useRef<NodeJS.Timeout | null>(null);
+  const chromaticPassRef = useRef<ShaderPass | null>(null);
+  const driftStartTimeRef = useRef(0);
 
   // Scene refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -140,7 +142,6 @@ function Scene({ chatProps }: SceneProps) {
   // Animation state
   const animationProgressRef = useRef(0);
   const isAnimatingRef = useRef(false);
-  const driftStartTimeRef = useRef(0);
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -199,6 +200,29 @@ function Scene({ chatProps }: SceneProps) {
     }
   }, [buffer]);
 
+  // Listen for text render complete event
+  useEffect(() => {
+    const startDrifting = () => {
+      if (cameraRef.current) {
+        isDriftingRef.current = true;
+        driftStartTimeRef.current = performance.now();
+
+        // Calculate initial drift velocity
+        const moveDirection = new THREE.Vector3()
+          .subVectors(targetPositionRef.current, startPositionRef.current)
+          .normalize();
+        const driftSpeed = 0.0002;
+        targetDriftVelocityRef.current.copy(
+          moveDirection.multiplyScalar(driftSpeed)
+        );
+      }
+    };
+
+    window.addEventListener("textRenderComplete", startDrifting);
+    return () =>
+      window.removeEventListener("textRenderComplete", startDrifting);
+  }, []);
+
   const handleFirstClick = () => {
     if (!hasStarted) {
       if (!cameraRef.current || !controlsRef.current || isAnimatingRef.current)
@@ -208,17 +232,9 @@ function Scene({ chatProps }: SceneProps) {
       getRandomPosition(cameraRef.current.position, tempVector.current);
       targetPositionRef.current.copy(tempVector.current);
 
-      const moveDirection = tempVector.current
-        .subVectors(targetPositionRef.current, startPositionRef.current)
-        .normalize();
-      const driftSpeed = 0.0002;
-      targetDriftVelocityRef.current.copy(
-        moveDirection.multiplyScalar(driftSpeed)
-      );
-      driftVelocityRef.current.set(0, 0, 0);
-
       animationProgressRef.current = 0;
       isAnimatingRef.current = true;
+      isDriftingRef.current = false; // Ensure drift is off during initial movement
       setHasStarted(true);
     }
   };
@@ -249,13 +265,8 @@ function Scene({ chatProps }: SceneProps) {
         getRandomPosition(cameraRef.current.position, tempVector.current);
         targetPositionRef.current.copy(tempVector.current);
 
-        const moveDirection = tempVector.current
-          .subVectors(targetPositionRef.current, startPositionRef.current)
-          .normalize();
-        const driftSpeed = 0.0002;
-        targetDriftVelocityRef.current.copy(
-          moveDirection.multiplyScalar(driftSpeed)
-        );
+        // Reset drift state
+        isDriftingRef.current = false;
         driftVelocityRef.current.set(0, 0, 0);
 
         animationProgressRef.current = 0;
@@ -358,11 +369,6 @@ function Scene({ chatProps }: SceneProps) {
     controls.enableRotate = false;
     controls.target.set(0, 0, 0);
     controls.update();
-
-    // Performance optimizations
-    // Pre-allocate vectors and objects to avoid garbage collection
-    const tempVector1 = new THREE.Vector3();
-    const tempVector2 = new THREE.Vector3();
 
     // Optimize model loading
     const loader = new GLTFLoader();
@@ -474,44 +480,27 @@ function Scene({ chatProps }: SceneProps) {
       }
     );
 
-    // Optimize animation loop with time smoothing
-    let lastFrameTime = 0;
-    const frameTimeBuffer: number[] = new Array(10).fill(16.67);
-    let frameTimeIndex = 0;
-    let isAnimating = false;
+    // Animation
+    let running = true;
 
     const animate = (currentTime: number) => {
-      if (!isAnimating) {
-        requestAnimationFrame(animate);
-        return;
-      }
+      if (!running) return;
 
-      // Smooth frame time calculation
-      const rawDeltaTime = currentTime - lastFrameTime;
-      lastFrameTime = currentTime;
-
-      frameTimeBuffer[frameTimeIndex] = rawDeltaTime;
-      frameTimeIndex = (frameTimeIndex + 1) % frameTimeBuffer.length;
-
-      if (isAnimatingRef.current && camera) {
-        animationProgressRef.current += 0.006 * (rawDeltaTime / 16.67);
+      if (isAnimatingRef.current && cameraRef.current) {
+        animationProgressRef.current += 0.006;
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
-          driftStartTimeRef.current = performance.now();
-          driftVelocityRef.current.set(0, 0, 0);
           animationProgressRef.current = 1;
-          // Allow input again after movement is finished
           setTimeout(() => {
             setCanInput(true);
-          }, 200); // small delay for smoothness
+          }, 200);
         }
 
         const t = animationProgressRef.current;
         const easedProgress =
           t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
 
-        // Fade in chromatic aberration during movement with custom timing
         let chromaticOpacity = 0;
         if (t < 0.5) {
           chromaticOpacity = (t / 0.5) * (t / 0.5);
@@ -527,35 +516,22 @@ function Scene({ chatProps }: SceneProps) {
           chromaticPassRef.current.uniforms.opacity.value = chromaticOpacity;
         }
 
-        // Use pre-allocated vectors for position calculations
-        tempVector1.copy(startPositionRef.current);
-        tempVector2.copy(targetPositionRef.current);
-        camera.position.lerpVectors(tempVector1, tempVector2, easedProgress);
-      } else if (
-        !isAnimatingRef.current &&
-        chromaticPassRef.current?.uniforms?.opacity
-      ) {
-        chromaticPassRef.current.uniforms.opacity.value = 0;
-      }
-
-      // --- INFINITE DRIFT LOGIC ---
-      if (camera) {
-        // Use performance.now() for more precise timing
-        const driftTime =
-          (performance.now() - driftStartTimeRef.current) / 1000;
+        cameraRef.current.position.lerpVectors(
+          startPositionRef.current,
+          targetPositionRef.current,
+          easedProgress
+        );
+      } else if (isDriftingRef.current && cameraRef.current) {
+        const driftTime = (currentTime - driftStartTimeRef.current) / 1000;
         const driftProgress = Math.min(driftTime / 0.5, 1);
         const easeInDrift = driftProgress * driftProgress;
 
-        // Limit the maximum drift velocity to prevent stuttering
         const maxDriftSpeed = 0.0005;
         targetDriftVelocityRef.current.clampLength(0, maxDriftSpeed);
 
-        // Store previous position for smooth movement
-        const previousPosition = camera.position.clone();
+        const previousPosition = cameraRef.current.position.clone();
 
-        // Update drift velocity smoothly
         if (driftTime > 10) {
-          // After 10 seconds, slow to a stop
           driftVelocityRef.current.lerp(new THREE.Vector3(0, 0, 0), 0.01);
         } else {
           driftVelocityRef.current.lerp(
@@ -564,49 +540,46 @@ function Scene({ chatProps }: SceneProps) {
           );
         }
 
-        // Always apply drift velocity
-        camera.position.add(driftVelocityRef.current);
+        cameraRef.current.position.add(driftVelocityRef.current);
 
-        const distanceFromCenter = camera.position.length();
+        const distanceFromCenter = cameraRef.current.position.length();
         if (distanceFromCenter > 2.5 || distanceFromCenter < 0.5) {
-          // Calculate ideal position
           idealPosition.current
-            .copy(camera.position)
+            .copy(cameraRef.current.position)
             .normalize()
             .multiplyScalar(1.5);
 
-          // Use a stronger correction when too far from center
           const correctionStrength = distanceFromCenter > 2.5 ? 0.05 : 0.02;
+          cameraRef.current.position.lerp(
+            idealPosition.current,
+            correctionStrength
+          );
 
-          // Smoothly move to ideal position
-          camera.position.lerp(idealPosition.current, correctionStrength);
-
-          // Calculate new direction based on the correction
           const newDirection = idealPosition.current
             .sub(previousPosition)
             .normalize();
 
-          // Update drift velocity to match new direction while maintaining speed
           const currentSpeed = driftVelocityRef.current.length();
           driftVelocityRef.current.copy(
             newDirection.multiplyScalar(currentSpeed * 0.8)
           );
 
-          // Update target velocity to match new direction
           targetDriftVelocityRef.current.copy(
             newDirection.multiplyScalar(maxDriftSpeed)
           );
         }
       }
 
-      controls.update();
-      composer.render();
+      if (controlsRef.current) {
+        controlsRef.current.update();
+      }
+      composerRef.current?.render();
 
       requestAnimationFrame(animate);
     };
 
     // Start animation loop
-    isAnimating = true;
+    running = true;
     animate(0);
 
     // Optimized resize handler with debounce
@@ -634,7 +607,7 @@ function Scene({ chatProps }: SceneProps) {
 
     // Cleanup
     return () => {
-      isAnimating = false;
+      running = false;
       window.removeEventListener("resize", handleResize);
       if (containerRef.current && renderer.domElement) {
         containerRef.current.removeChild(renderer.domElement);

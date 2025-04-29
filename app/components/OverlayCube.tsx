@@ -80,6 +80,14 @@ export default function OverlayCube({
   const maxScrollRef = useRef(0);
   const currentMeshRef = useRef<THREE.Group | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const animationsRef = useRef<((time: number) => boolean)[]>([]);
+
+  // Clear animations when component unmounts
+  useEffect(() => {
+    return () => {
+      animationsRef.current = [];
+    };
+  }, []);
 
   // Create shader materials
   const materials = useMemo(() => {
@@ -438,7 +446,7 @@ export default function OverlayCube({
         // Wait for all meshes to be created and added
         Promise.all(meshPromises).then(() => {
           currentMesh = group;
-          currentMeshRef.current = group; // Store reference to current mesh
+          currentMeshRef.current = group;
           group.position.set(0, 1.0, 0);
           scrollPositionRef.current = 1.0;
           scene.add(group);
@@ -446,30 +454,28 @@ export default function OverlayCube({
           // Start fade animation after everything is loaded
           const startTime = performance.now();
           const fadeInDuration = 700; // 0.7 seconds
+          const fadeProgress = { value: 0 };
 
-          const animateFade = () => {
-            const elapsedTime = performance.now() - startTime;
-            const progress = Math.min(elapsedTime / fadeInDuration, 1);
+          const updateFade = (currentTime: number) => {
+            const elapsed = currentTime - startTime;
+            fadeProgress.value = Math.min(elapsed / fadeInDuration, 1);
 
             group.traverse((child) => {
               if (child instanceof THREE.Mesh) {
                 const material = child.material as THREE.MeshPhysicalMaterial;
-                material.opacity = progress;
+                material.opacity = fadeProgress.value;
                 material.needsUpdate = true;
               }
             });
 
-            if (progress < 1) {
-              requestAnimationFrame(animateFade);
-            } else {
+            if (fadeProgress.value >= 1) {
               window.dispatchEvent(new CustomEvent("textRenderComplete"));
             }
+            return fadeProgress.value < 1;
           };
 
-          // Start the fade animation in the next frame after everything is ready
-          requestAnimationFrame(() => {
-            requestAnimationFrame(animateFade);
-          });
+          // Add fade animation to the animation queue
+          animationsRef.current.push(updateFade);
         });
       };
 
@@ -515,10 +521,15 @@ export default function OverlayCube({
       let running = true;
       let time = 0;
 
-      function animate() {
+      function animate(currentTime: number) {
         if (!running) return;
 
         time += 0.01;
+
+        // Process all active animations
+        animationsRef.current = animationsRef.current.filter((anim) =>
+          anim(currentTime)
+        );
 
         // Animate moving lights
         if (movingLight1 && movingLight2) {
@@ -544,7 +555,9 @@ export default function OverlayCube({
         renderer.render(scene, camera);
         requestAnimationFrame(animate);
       }
-      animate();
+
+      // Start animation loop
+      animate(performance.now());
 
       // Update resize handler
       function handleResize() {
