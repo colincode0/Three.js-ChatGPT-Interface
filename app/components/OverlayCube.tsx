@@ -13,6 +13,7 @@ interface ExtendedTextGeometryParameters extends TextGeometryParameters {
 
 interface OverlayCubeProps {
   chatProps: UseChatHelpers;
+  shouldFadeOut: boolean;
 }
 
 function cleanText(text: string): string {
@@ -65,7 +66,10 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
   return lines;
 }
 
-export default function OverlayCube({ chatProps }: OverlayCubeProps) {
+export default function OverlayCube({
+  chatProps,
+  shouldFadeOut,
+}: OverlayCubeProps) {
   const { messages, isLoading: isChatLoading } = chatProps;
   const [currentText, setCurrentText] = useState("");
   const [updateTextFn, setUpdateTextFn] = useState<
@@ -74,6 +78,8 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
   const textGroupRef = useRef<THREE.Group | null>(null);
   const scrollPositionRef = useRef(0);
   const maxScrollRef = useRef(0);
+  const currentMeshRef = useRef<THREE.Group | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
 
   // Create shader materials
   const materials = useMemo(() => {
@@ -137,8 +143,84 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
           textGroupRef.current.position.y = 0.5; // Reset to initial position
         }
       }
+    } else if (isChatLoading && currentMeshRef.current && sceneRef.current) {
+      // Start fade out immediately when loading begins
+      const meshToFadeOut = currentMeshRef.current;
+      const startTime = performance.now();
+      const duration = 400; // 0.4 seconds for fade out
+
+      const fadeOut = () => {
+        const currentTime = performance.now();
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        meshToFadeOut.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            const material = child.material as THREE.MeshPhysicalMaterial;
+            if (material.opacity !== undefined) {
+              material.opacity = 1 - progress;
+            }
+          }
+        });
+
+        if (progress < 1) {
+          requestAnimationFrame(fadeOut);
+        } else {
+          // After fade out, remove and dispose old mesh
+          sceneRef.current?.remove(meshToFadeOut);
+          meshToFadeOut.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              (child.material as THREE.Material).dispose();
+            }
+          });
+          currentMeshRef.current = null;
+        }
+      };
+
+      fadeOut();
     }
   }, [messages, isChatLoading]);
+
+  // Handle fade out when shouldFadeOut changes
+  useEffect(() => {
+    if (shouldFadeOut && currentMeshRef.current && sceneRef.current) {
+      const meshToFadeOut = currentMeshRef.current;
+      const startTime = performance.now();
+      const duration = 400; // 0.4 seconds for fade out
+
+      const fadeOut = () => {
+        const currentTime = performance.now();
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        meshToFadeOut.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            const material = child.material as THREE.MeshPhysicalMaterial;
+            if (material.opacity !== undefined) {
+              material.opacity = 1 - progress;
+            }
+          }
+        });
+
+        if (progress < 1) {
+          requestAnimationFrame(fadeOut);
+        } else {
+          // After fade out, remove and dispose old mesh
+          sceneRef.current?.remove(meshToFadeOut);
+          meshToFadeOut.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              (child.material as THREE.Material).dispose();
+            }
+          });
+          currentMeshRef.current = null;
+        }
+      };
+
+      fadeOut();
+    }
+  }, [shouldFadeOut]);
 
   // Update scroll handler with opposite direction
   useEffect(() => {
@@ -233,6 +315,7 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
     }
 
     const scene = new THREE.Scene();
+    sceneRef.current = scene;
 
     // Calculate camera parameters based on div dimensions
     const divHeight = window.innerHeight * 0.6; // 60% of viewport height
@@ -355,6 +438,7 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         // Wait for all meshes to be created and added
         Promise.all(meshPromises).then(() => {
           currentMesh = group;
+          currentMeshRef.current = group; // Store reference to current mesh
           group.position.set(0, 1.0, 0);
           scrollPositionRef.current = 1.0;
           scene.add(group);
