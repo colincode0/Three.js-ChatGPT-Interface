@@ -142,8 +142,8 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
     const handleWheel = (event: WheelEvent) => {
       if (textGroupRef.current) {
         const scrollSpeed = 0.002;
-        // Invert the delta so scrolling down (positive deltaY) moves text up (positive position change)
-        const delta = -event.deltaY * scrollSpeed;
+        // Removed the negative sign to invert scroll direction
+        const delta = event.deltaY * scrollSpeed;
         const currentPos = textGroupRef.current.position.y;
 
         // Calculate boundaries
