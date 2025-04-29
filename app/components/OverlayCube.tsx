@@ -41,18 +41,21 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
 
   for (const word of words) {
     const wordLength = word.length;
-    if (currentLineLength + wordLength + 1 <= maxCharsPerLine) {
+    // Add extra padding to account for character width variations
+    const effectiveLength = wordLength + Math.ceil(wordLength * 0.1);
+
+    if (currentLineLength + effectiveLength + 1 <= maxCharsPerLine) {
       if (currentLine) {
         currentLine += " " + word;
-        currentLineLength += wordLength + 1;
+        currentLineLength += effectiveLength + 1;
       } else {
         currentLine = word;
-        currentLineLength = wordLength;
+        currentLineLength = effectiveLength;
       }
     } else {
       if (currentLine) lines.push(currentLine);
       currentLine = word;
-      currentLineLength = wordLength;
+      currentLineLength = effectiveLength;
     }
   }
   if (currentLine) lines.push(currentLine);
@@ -275,101 +278,124 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
     fontLoader.load("/fonts/helvetiker_regular.typeface.json", (font) => {
       let currentMesh: THREE.Group | null = null;
 
-      const createTextMesh = (text: string) => {
-        const group = new THREE.Group();
-        textGroupRef.current = group;
-
-        const maxCharsPerLine = 38;
-        const fontSize = 0.1;
-        const lineSpacing = 1.4;
-
-        const lines = wrapText(text, maxCharsPerLine);
-        // Calculate total height based on number of lines and spacing
-        const totalHeight = lines.length * fontSize * lineSpacing;
-        maxScrollRef.current = totalHeight;
-
-        console.log("Text Metrics:", {
-          lines: lines.length,
-          fontSize,
-          lineSpacing,
-          totalHeight,
-          effectiveScrollHeight: totalHeight * 0.8,
-        });
-
-        // Calculate the maximum width for left alignment
-        let maxWidth = 0;
-        const geometries = lines.map((line) => {
-          const geometry = new TextGeometry(line, {
-            font: font,
-            size: fontSize,
-            height: 0.02,
-            curveSegments: 4,
-            bevelEnabled: true,
-            bevelThickness: 0.01,
-            bevelSize: 0.008,
-            bevelSegments: 5,
-          } as ExtendedTextGeometryParameters);
-          geometry.computeBoundingBox();
-          const width =
-            geometry.boundingBox!.max.x - geometry.boundingBox!.min.x;
-          maxWidth = Math.max(maxWidth, width);
-          return geometry;
-        });
-
-        // Left align position
-        const leftAlignX = -maxWidth / 2;
-
-        lines.forEach((line, index) => {
-          const textGeometry = geometries[index];
-          // Keep the same line positioning (going down from top)
-          const lineY = -index * fontSize * lineSpacing;
-
-          const textMaterial = new THREE.MeshPhysicalMaterial({
-            color: 0xffffff,
-            metalness: 0.6,
-            roughness: 0.2,
-            reflectivity: 1.0,
-            clearcoat: 1.0,
-            clearcoatRoughness: 0.1,
-            flatShading: true,
-            envMapIntensity: 1.5,
-          });
-
-          const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-          textMesh.position.set(leftAlignX, lineY, 0);
-          textMesh.castShadow = true;
-          textMesh.receiveShadow = true;
-          group.add(textMesh);
-        });
-
-        group.position.z = 0;
-        group.position.y = 1.0; // Start at initial position
-
-        return group;
-      };
+      // Text configuration constants
+      const maxCharsPerLine = 55; // Slightly reduced to account for padding
+      const fontSize = 0.085; // Keep smaller font size
+      const lineSpacing = 1.6;
+      const leftMargin = -1.3;
 
       // Create update function
       const updateText = (text: string) => {
+        // Remove old mesh immediately
         if (currentMesh) {
           scene.remove(currentMesh);
           currentMesh.traverse((child) => {
             if (child instanceof THREE.Mesh) {
               child.geometry.dispose();
+              if (child.material instanceof THREE.Material) {
+                child.material.dispose();
+              }
             }
           });
         }
-        currentMesh = createTextMesh(text);
-        scene.add(currentMesh);
 
-        // Reset scroll position when new text is created
-        scrollPositionRef.current = 1.0;
+        const group = new THREE.Group();
+        textGroupRef.current = group;
+        scene.add(group);
+
+        const lines = wrapText(text, maxCharsPerLine);
+        const totalHeight = lines.length * fontSize * lineSpacing;
+        maxScrollRef.current = totalHeight;
+
+        // Create shared material for all text
+        const sharedMaterial = new THREE.MeshPhysicalMaterial({
+          color: 0xffffff,
+          metalness: 0.6,
+          roughness: 0.2,
+          reflectivity: 1.0,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.1,
+          flatShading: true,
+          envMapIntensity: 1.5,
+          transparent: true,
+          opacity: 0,
+          alphaTest: 0,
+          depthWrite: false,
+          blending: THREE.NormalBlending,
+        });
+
+        // Create meshes array to track loading
+        const meshPromises = lines.map((line, i) => {
+          return new Promise<void>((resolve) => {
+            const geometry = new TextGeometry(line, {
+              font: font,
+              size: fontSize,
+              height: 0.012, // Reduced depth
+              curveSegments: 3, // Reduced segments
+              bevelEnabled: true,
+              bevelThickness: 0.004, // Smaller bevel thickness
+              bevelSize: 0.003, // Smaller bevel size
+              bevelSegments: 2, // Reduced bevel segments
+            } as ExtendedTextGeometryParameters);
+
+            const textMesh = new THREE.Mesh(geometry, sharedMaterial.clone());
+            textMesh.material.opacity = 0;
+            const lineY = -i * fontSize * lineSpacing;
+            // Position text with left alignment
+            textMesh.position.set(leftMargin, lineY, 0);
+            textMesh.castShadow = true;
+            textMesh.receiveShadow = true;
+            group.add(textMesh);
+
+            // Use setTimeout to ensure geometry is processed
+            setTimeout(resolve, 0);
+          });
+        });
+
+        // Wait for all meshes to be created and added
+        Promise.all(meshPromises).then(() => {
+          currentMesh = group;
+          group.position.set(0, 1.0, 0);
+          scrollPositionRef.current = 1.0;
+          scene.add(group);
+
+          // Start fade animation after everything is loaded
+          const startTime = performance.now();
+          const fadeInDuration = 700; // 0.7 seconds
+
+          const animateFade = () => {
+            const elapsedTime = performance.now() - startTime;
+            const progress = Math.min(elapsedTime / fadeInDuration, 1);
+
+            group.traverse((child) => {
+              if (child instanceof THREE.Mesh) {
+                const material = child.material as THREE.MeshPhysicalMaterial;
+                material.opacity = progress;
+                material.needsUpdate = true;
+              }
+            });
+
+            if (progress < 1) {
+              requestAnimationFrame(animateFade);
+            } else {
+              window.dispatchEvent(new CustomEvent("textRenderComplete"));
+            }
+          };
+
+          // Start the fade animation in the next frame after everything is ready
+          requestAnimationFrame(() => {
+            requestAnimationFrame(animateFade);
+          });
+        });
       };
 
       // Set the update function
       setUpdateTextFn(() => updateText);
 
       // Create initial text mesh
-      updateText(currentText);
+      if (currentText) {
+        updateText(currentText);
+      }
 
       // Create environment map for reflections
       const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256);
