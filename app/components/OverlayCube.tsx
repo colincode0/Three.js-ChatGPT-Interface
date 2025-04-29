@@ -142,13 +142,13 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
     const handleWheel = (event: WheelEvent) => {
       if (textGroupRef.current) {
         const scrollSpeed = 0.002;
-        // Removed the negative sign to invert scroll direction
         const delta = event.deltaY * scrollSpeed;
         const currentPos = textGroupRef.current.position.y;
 
         // Calculate boundaries
         const bottomY = 1.0; // Starting position
-        const topY = 1.0 + maxScrollRef.current * 0.15; // Allow scrolling up
+        // Adjust topY to account for full text height plus a small buffer
+        const topY = 1.0 + maxScrollRef.current * 0.8; // Increased multiplier to see more text
 
         // Calculate new position (add delta)
         let newPosition = currentPos + delta;
@@ -167,6 +167,7 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
           topY,
           bottomY,
           totalHeight: maxScrollRef.current,
+          textLines: maxScrollRef.current / (0.1 * 1.4), // fontSize * lineSpacing
           direction: event.deltaY > 0 ? "scrolling down" : "scrolling up",
         });
       }
@@ -269,6 +270,14 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         // Calculate total height based on number of lines and spacing
         const totalHeight = lines.length * fontSize * lineSpacing;
         maxScrollRef.current = totalHeight;
+
+        console.log("Text Metrics:", {
+          lines: lines.length,
+          fontSize,
+          lineSpacing,
+          totalHeight,
+          effectiveScrollHeight: totalHeight * 0.8,
+        });
 
         // Calculate the maximum width for left alignment
         let maxWidth = 0;
