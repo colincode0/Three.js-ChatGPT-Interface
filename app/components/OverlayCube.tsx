@@ -493,10 +493,10 @@ export default function OverlayCube({
       scene.environment = cubeRenderTarget.texture;
 
       // Lighting adjustments for shimmery appearance
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
       scene.add(ambientLight);
 
-      const mainLight = new THREE.DirectionalLight(0xffffff, 2.0);
+      const mainLight = new THREE.DirectionalLight(0xffffff, 3);
       mainLight.position.set(2, 2, 1);
       mainLight.castShadow = true;
       mainLight.shadow.mapSize.width = 1024;
@@ -504,16 +504,16 @@ export default function OverlayCube({
       scene.add(mainLight);
 
       // Add moving lights for shimmer effect
-      const movingLight1 = new THREE.PointLight(0xffffff, 1.0, 10);
+      const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
       movingLight1.position.set(2, 0, 2);
       scene.add(movingLight1);
 
-      const movingLight2 = new THREE.PointLight(0xffffff, 1.0, 10);
+      const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
       movingLight2.position.set(-2, 0, 2);
       scene.add(movingLight2);
 
       // Subtle rim light
-      const rimLight = new THREE.DirectionalLight(0xffffff, 0.7);
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
       rimLight.position.set(0, 0, -1);
       scene.add(rimLight);
 
