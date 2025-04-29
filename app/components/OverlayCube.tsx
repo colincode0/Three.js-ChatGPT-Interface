@@ -129,48 +129,45 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         console.log("Original message:", lastMessage.content);
         setCurrentText(lastMessage.content);
         // Reset scroll position when new message arrives
-        scrollPositionRef.current = 0;
+        scrollPositionRef.current = 0.5;
         if (textGroupRef.current) {
-          textGroupRef.current.position.y = 0; // Reset to initial position
+          textGroupRef.current.position.y = 0.5; // Reset to initial position
         }
       }
     }
   }, [messages, isChatLoading]);
 
-  // Update scroll handler with corrected boundaries
+  // Update scroll handler with opposite direction
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
       if (textGroupRef.current) {
-        const scrollSpeed = 0.001;
-        const delta = event.deltaY * scrollSpeed;
+        const scrollSpeed = 0.002;
+        // Invert the delta so scrolling down (positive deltaY) moves text up (positive position change)
+        const delta = -event.deltaY * scrollSpeed;
         const currentPos = textGroupRef.current.position.y;
 
-        // Calculate scroll boundaries
-        const startY = 1.0; // Match the startY from createTextMesh
-        const topLimit = startY; // Can't scroll above starting position
-        const bottomLimit = startY - maxScrollRef.current; // Can scroll down by total height
+        // Calculate boundaries
+        const bottomY = 1.0; // Starting position
+        const topY = 1.0 + maxScrollRef.current * 0.15; // Allow scrolling up
 
-        // Add delta directly (natural scroll direction)
+        // Calculate new position (add delta)
         let newPosition = currentPos + delta;
 
-        // Clamp the new position to boundaries
-        newPosition = Math.max(Math.min(newPosition, topLimit), bottomLimit);
+        // Clamp between bottom and top boundaries
+        newPosition = Math.max(bottomY, Math.min(topY, newPosition));
 
-        // Only update if position changed
-        if (newPosition !== currentPos) {
-          textGroupRef.current.position.y = newPosition;
-          scrollPositionRef.current = newPosition;
-        }
+        textGroupRef.current.position.y = newPosition;
+        scrollPositionRef.current = newPosition;
 
-        // Debug logging
-        console.log({
+        console.log("Scroll Debug:", {
+          deltaY: event.deltaY,
+          delta,
           currentPos,
           newPosition,
-          delta,
-          topLimit,
-          bottomLimit,
-          scrollHeight: maxScrollRef.current,
-          startY,
+          topY,
+          bottomY,
+          totalHeight: maxScrollRef.current,
+          direction: event.deltaY > 0 ? "scrolling down" : "scrolling up",
         });
       }
     };
@@ -178,16 +175,6 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
     window.addEventListener("wheel", handleWheel);
     return () => window.removeEventListener("wheel", handleWheel);
   }, []);
-
-  // Update reset position logic
-  useEffect(() => {
-    if (messages.length > 0 && !isChatLoading) {
-      if (textGroupRef.current) {
-        textGroupRef.current.position.y = 1.0; // Reset to top position
-        scrollPositionRef.current = 1.0;
-      }
-    }
-  }, [messages, isChatLoading]);
 
   // Update 3D text when currentText changes
   useEffect(() => {
@@ -279,12 +266,9 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         const lineSpacing = 1.4;
 
         const lines = wrapText(text, maxCharsPerLine);
-        // Calculate total height based on number of lines
-        const totalHeight = (lines.length - 1) * (fontSize * lineSpacing);
+        // Calculate total height based on number of lines and spacing
+        const totalHeight = lines.length * fontSize * lineSpacing;
         maxScrollRef.current = totalHeight;
-
-        // Start position should be at the top of the viewport
-        const startY = 1.0; // Adjust this value to position text at top of viewport
 
         // Calculate the maximum width for left alignment
         let maxWidth = 0;
@@ -311,8 +295,8 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
 
         lines.forEach((line, index) => {
           const textGeometry = geometries[index];
-          // Position lines going down (negative Y) from the start position
-          const lineY = startY - index * fontSize * lineSpacing;
+          // Keep the same line positioning (going down from top)
+          const lineY = -index * fontSize * lineSpacing;
 
           const textMaterial = new THREE.MeshPhysicalMaterial({
             color: 0xffffff,
@@ -333,7 +317,7 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         });
 
         group.position.z = 0;
-        group.position.y = startY; // Start at the top position
+        group.position.y = 1.0; // Start at initial position
         group.rotation.x = -0.1;
 
         return group;
@@ -351,6 +335,9 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
         }
         currentMesh = createTextMesh(text);
         scene.add(currentMesh);
+
+        // Reset scroll position when new text is created
+        scrollPositionRef.current = 1.0;
       };
 
       // Set the update function
@@ -358,11 +345,6 @@ export default function OverlayCube({ chatProps }: OverlayCubeProps) {
 
       // Create initial text mesh
       updateText(currentText);
-
-      // Set initial position
-      if (textGroupRef.current) {
-        textGroupRef.current.position.y = 0;
-      }
 
       // Create environment map for reflections
       const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256);
