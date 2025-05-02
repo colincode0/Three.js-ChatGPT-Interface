@@ -534,8 +534,9 @@ function Scene({ chatProps }: SceneProps) {
         );
       } else if (isDriftingRef.current && cameraRef.current) {
         const driftTime = (currentTime - driftStartTimeRef.current) / 1000;
-        const driftProgress = Math.min(driftTime / 0.5, 1);
-        const easeInDrift = driftProgress * driftProgress;
+        const driftProgress = Math.min(driftTime / 1.0, 1);
+        // Use cubic ease-in for smoother acceleration
+        const easeInDrift = driftProgress * driftProgress * driftProgress;
 
         const maxDriftSpeed = 0.0005;
         targetDriftVelocityRef.current.clampLength(0, maxDriftSpeed);
@@ -545,9 +546,10 @@ function Scene({ chatProps }: SceneProps) {
         if (driftTime > 10) {
           driftVelocityRef.current.lerp(new THREE.Vector3(0, 0, 0), 0.01);
         } else {
+          // Apply easing to the drift velocity
           driftVelocityRef.current.lerp(
             targetDriftVelocityRef.current,
-            easeInDrift
+            easeInDrift * 0.1 // Reduced lerp factor for smoother transition
           );
         }
 
