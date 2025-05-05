@@ -95,6 +95,8 @@ export default function OverlayCube({
   const cubeOpacityRef = useRef(0);
   const isTransitioningRef = useRef(false);
   const lastMessageIdRef = useRef<string | null>(null);
+  const movingLight1Ref = useRef<THREE.PointLight | null>(null);
+  const movingLight2Ref = useRef<THREE.PointLight | null>(null);
 
   // Handle loading state changes
   useEffect(() => {
@@ -439,6 +441,20 @@ export default function OverlayCube({
         cubeRef.current.rotation.y = time * 0.3;
       }
 
+      // Animate moving lights
+      if (movingLight1Ref.current && movingLight2Ref.current) {
+        movingLight1Ref.current.position.x = Math.sin(time * 0.5) * 2;
+        movingLight1Ref.current.position.z = Math.cos(time * 0.5) * 2;
+        movingLight2Ref.current.position.x = Math.sin(time * 0.5 + Math.PI) * 2;
+        movingLight2Ref.current.position.z = Math.cos(time * 0.5 + Math.PI) * 2;
+      }
+
+      // Animate text group if it exists
+      if (textGroupRef.current) {
+        // Subtle z-axis movement
+        textGroupRef.current.position.z = Math.sin(time * 0.3) * 0.05;
+      }
+
       // Process text animations if any
       animationsRef.current = animationsRef.current.filter((anim) =>
         anim(currentTime)
@@ -618,10 +634,12 @@ export default function OverlayCube({
       const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
       movingLight1.position.set(2, 0, 2);
       scene.add(movingLight1);
+      movingLight1Ref.current = movingLight1;
 
       const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
       movingLight2.position.set(-2, 0, 2);
       scene.add(movingLight2);
+      movingLight2Ref.current = movingLight2;
 
       // Subtle rim light
       const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
