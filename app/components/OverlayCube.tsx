@@ -11,7 +11,7 @@ interface ExtendedTextGeometryParameters extends TextGeometryParameters {
 }
 
 interface OverlayCubeProps {
-  messages: { role: string; content: string }[];
+  messages: { role: string; content: string; id: string }[];
   isChatLoading: boolean;
 }
 
@@ -94,17 +94,19 @@ export default function OverlayCube({
   const pendingTextRef = useRef<string | null>(null);
   const cubeOpacityRef = useRef(0);
   const isTransitioningRef = useRef(false);
+  const lastMessageIdRef = useRef<string | null>(null);
 
   // Handle loading state changes
   useEffect(() => {
     if (isChatLoading) {
+      console.log("Loading started");
       // When loading starts, fade out current text and show cube
       if (
         currentMeshRef.current &&
         sceneRef.current &&
         !isTransitioningRef.current
       ) {
-        console.log("Loading started, fading out text");
+        console.log("Fading out existing text");
         isTransitioningRef.current = true;
         const meshToFadeOut = currentMeshRef.current;
         const startTime = performance.now();
@@ -140,6 +142,7 @@ export default function OverlayCube({
 
             // Fade in cube after text is gone
             if (cubeRef.current) {
+              console.log("Fading in cube");
               const startTime = performance.now();
               const duration = 400;
 
@@ -168,6 +171,7 @@ export default function OverlayCube({
         fadeOut();
       } else if (cubeRef.current) {
         // If no text to fade out, just show cube
+        console.log("No text to fade out, showing cube");
         const material = cubeRef.current.material as THREE.MeshPhongMaterial;
         material.opacity = 1;
         cubeOpacityRef.current = 1;
@@ -180,8 +184,12 @@ export default function OverlayCube({
     if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === "assistant" && !isChatLoading) {
-        // Store the complete message
-        pendingTextRef.current = lastMessage.content;
+        // Only store new messages
+        if (lastMessage.id !== lastMessageIdRef.current) {
+          console.log("New message received, storing for later");
+          lastMessageIdRef.current = lastMessage.id;
+          pendingTextRef.current = lastMessage.content;
+        }
       }
     }
   }, [messages, isChatLoading]);
@@ -189,7 +197,7 @@ export default function OverlayCube({
   // Listen for camera movement completion
   useEffect(() => {
     const handleCameraMovementComplete = () => {
-      console.log("Camera movement complete, checking for pending text");
+      console.log("Camera movement complete");
       if (
         pendingTextRef.current &&
         updateTextFn &&
@@ -223,6 +231,8 @@ export default function OverlayCube({
         };
 
         fadeOutCube();
+      } else {
+        console.log("No pending text or already transitioning");
       }
     };
 
@@ -272,7 +282,8 @@ export default function OverlayCube({
 
   // Update 3D text when currentText changes
   useEffect(() => {
-    if (updateTextFn) {
+    if (updateTextFn && currentText) {
+      console.log("Updating 3D text");
       updateTextFn(currentText);
     }
   }, [currentText, updateTextFn]);
