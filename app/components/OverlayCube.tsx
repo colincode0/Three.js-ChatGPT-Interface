@@ -66,6 +66,64 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
   return lines;
 }
 
+// Function to split text into chunks while preserving paragraph formatting
+function splitIntoChunks(text: string): string[] {
+  // First clean the text
+  const cleanedText = cleanText(text);
+
+  // Split into paragraphs (preserving empty lines)
+  const paragraphs = cleanedText.split(/\n\s*\n/);
+
+  // Calculate total words to determine number of chunks
+  const totalWords = paragraphs.reduce(
+    (count, para) => count + para.split(/\s+/).length,
+    0
+  );
+
+  // Determine number of chunks based on text length
+  // For short responses (under 50 words), use 2 chunks
+  // For medium responses (50-150 words), use 3 chunks
+  // For long responses (over 150 words), use 4 chunks
+  let numChunks = 2;
+  if (totalWords > 150) {
+    numChunks = 4;
+  } else if (totalWords > 50) {
+    numChunks = 3;
+  }
+
+  // Calculate target words per chunk
+  const targetWordsPerChunk = Math.ceil(totalWords / numChunks);
+
+  const chunks: string[] = [];
+  let currentChunk: string[] = [];
+  let currentWordCount = 0;
+
+  // Distribute paragraphs into chunks
+  for (const paragraph of paragraphs) {
+    const paragraphWordCount = paragraph.split(/\s+/).length;
+
+    // If adding this paragraph would exceed the target, start a new chunk
+    if (
+      currentWordCount + paragraphWordCount > targetWordsPerChunk &&
+      currentChunk.length > 0
+    ) {
+      chunks.push(currentChunk.join("\n\n"));
+      currentChunk = [];
+      currentWordCount = 0;
+    }
+
+    currentChunk.push(paragraph);
+    currentWordCount += paragraphWordCount;
+  }
+
+  // Add the last chunk if it's not empty
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk.join("\n\n"));
+  }
+
+  return chunks;
+}
+
 export default function OverlayCube({
   messages,
   isChatLoading,
@@ -85,6 +143,7 @@ export default function OverlayCube({
   const cubeRef = useRef<THREE.Mesh | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const pendingTextRef = useRef<string | null>(null);
 
   // Reset loading state when loading starts
   useEffect(() => {
@@ -108,7 +167,8 @@ export default function OverlayCube({
     if (messages.length > 0 && !isChatLoading) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === "assistant") {
-        setCurrentText(lastMessage.content);
+        // Store the text but don't render it yet
+        pendingTextRef.current = lastMessage.content;
         scrollPositionRef.current = 0.5;
         if (textGroupRef.current) {
           textGroupRef.current.position.y = 0.5;
@@ -150,6 +210,26 @@ export default function OverlayCube({
       fadeOut();
     }
   }, [messages, isChatLoading]);
+
+  // Listen for camera movement completion
+  useEffect(() => {
+    const handleCameraMovementComplete = () => {
+      if (pendingTextRef.current && updateTextFn) {
+        setCurrentText(pendingTextRef.current);
+        pendingTextRef.current = null;
+      }
+    };
+
+    window.addEventListener(
+      "cameraMovementComplete",
+      handleCameraMovementComplete
+    );
+    return () =>
+      window.removeEventListener(
+        "cameraMovementComplete",
+        handleCameraMovementComplete
+      );
+  }, [updateTextFn]);
 
   // Handle fade out when shouldFadeOut changes
   useEffect(() => {

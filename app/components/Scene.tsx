@@ -503,6 +503,8 @@ function Scene({ chatProps }: SceneProps) {
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
           animationProgressRef.current = 1;
+          // Emit camera movement complete event
+          window.dispatchEvent(new CustomEvent("cameraMovementComplete"));
           setTimeout(() => {
             setCanInput(true);
           }, 200);
