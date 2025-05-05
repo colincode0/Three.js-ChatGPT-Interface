@@ -1,18 +1,18 @@
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import {
   TextGeometry,
   TextGeometryParameters,
 } from "three/examples/jsm/geometries/TextGeometry.js";
 import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
-import { UseChatHelpers } from "ai/react";
 
 interface ExtendedTextGeometryParameters extends TextGeometryParameters {
   height: number;
 }
 
 interface OverlayCubeProps {
-  chatProps: UseChatHelpers;
+  messages: { role: string; content: string }[];
+  isChatLoading: boolean;
   shouldFadeOut: boolean;
 }
 
@@ -67,10 +67,10 @@ function wrapText(text: string, maxCharsPerLine: number): string[] {
 }
 
 export default function OverlayCube({
-  chatProps,
+  messages,
+  isChatLoading,
   shouldFadeOut,
 }: OverlayCubeProps) {
-  const { messages, isLoading: isChatLoading } = chatProps;
   const [currentText, setCurrentText] = useState("");
   const [updateTextFn, setUpdateTextFn] = useState<
     ((text: string) => void) | null
@@ -81,61 +81,26 @@ export default function OverlayCube({
   const currentMeshRef = useRef<THREE.Group | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const animationsRef = useRef<((time: number) => boolean)[]>([]);
+  const cubeSceneRef = useRef<THREE.Scene | null>(null);
+  const cubeRef = useRef<THREE.Mesh | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Reset loading state when loading starts
+  useEffect(() => {
+    if (isChatLoading) {
+      // Reset any necessary state here
+    }
+  }, [isChatLoading]);
 
   // Clear animations when component unmounts
   useEffect(() => {
     return () => {
       animationsRef.current = [];
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
-  }, []);
-
-  // Create shader materials
-  const materials = useMemo(() => {
-    // Vertex shader
-    const vertexShader = `
-      varying vec2 vUv;
-      varying vec4 vPosition;
-      void main() {
-        vUv = uv;
-        vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
-        vPosition = projectionMatrix * modelViewPosition;
-        gl_Position = vPosition;
-      }
-    `;
-
-    // Fragment shader with fade effect
-    const fragmentShader = `
-      varying vec2 vUv;
-      varying vec4 vPosition;
-      uniform vec3 color;
-
-      void main() {
-        gl_FragColor = vec4(color, 1.0);
-      }
-    `;
-
-    // Create materials
-    const textMaterial = new THREE.ShaderMaterial({
-      vertexShader,
-      fragmentShader,
-      uniforms: {
-        color: { value: new THREE.Color(0xffffff) },
-      },
-      transparent: true,
-      side: THREE.DoubleSide,
-    });
-
-    const strokeMaterial = new THREE.ShaderMaterial({
-      vertexShader,
-      fragmentShader,
-      uniforms: {
-        color: { value: new THREE.Color(0x000000) },
-      },
-      transparent: true,
-      side: THREE.DoubleSide,
-    });
-
-    return { textMaterial, strokeMaterial };
   }, []);
 
   // Update text when messages change and loading is complete
@@ -143,19 +108,16 @@ export default function OverlayCube({
     if (messages.length > 0 && !isChatLoading) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === "assistant") {
-        console.log("Original message:", lastMessage.content);
         setCurrentText(lastMessage.content);
-        // Reset scroll position when new message arrives
         scrollPositionRef.current = 0.5;
         if (textGroupRef.current) {
-          textGroupRef.current.position.y = 0.5; // Reset to initial position
+          textGroupRef.current.position.y = 0.5;
         }
       }
     } else if (isChatLoading && currentMeshRef.current && sceneRef.current) {
-      // Start fade out immediately when loading begins
       const meshToFadeOut = currentMeshRef.current;
       const startTime = performance.now();
-      const duration = 400; // 0.4 seconds for fade out
+      const duration = 400;
 
       const fadeOut = () => {
         const currentTime = performance.now();
@@ -174,7 +136,6 @@ export default function OverlayCube({
         if (progress < 1) {
           requestAnimationFrame(fadeOut);
         } else {
-          // After fade out, remove and dispose old mesh
           sceneRef.current?.remove(meshToFadeOut);
           meshToFadeOut.traverse((child) => {
             if (child instanceof THREE.Mesh) {
@@ -195,7 +156,7 @@ export default function OverlayCube({
     if (shouldFadeOut && currentMeshRef.current && sceneRef.current) {
       const meshToFadeOut = currentMeshRef.current;
       const startTime = performance.now();
-      const duration = 400; // 0.4 seconds for fade out
+      const duration = 400;
 
       const fadeOut = () => {
         const currentTime = performance.now();
@@ -214,7 +175,6 @@ export default function OverlayCube({
         if (progress < 1) {
           requestAnimationFrame(fadeOut);
         } else {
-          // After fade out, remove and dispose old mesh
           sceneRef.current?.remove(meshToFadeOut);
           meshToFadeOut.traverse((child) => {
             if (child instanceof THREE.Mesh) {
@@ -230,7 +190,7 @@ export default function OverlayCube({
     }
   }, [shouldFadeOut]);
 
-  // Update scroll handler with opposite direction
+  // Update scroll handler
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
       if (textGroupRef.current) {
@@ -238,48 +198,24 @@ export default function OverlayCube({
         const delta = event.deltaY * scrollSpeed;
         const currentPos = textGroupRef.current.position.y;
 
-        // Calculate boundaries with adaptive scaling
-        const bottomY = 1.0; // Starting position stays fixed
-
-        // Calculate adaptive multiplier based on text height
-        // For shorter text (less than 2.0 units), use a smaller multiplier
-        // For longer text, gradually increase the multiplier
-        const baseMultiplier = 0.3; // Base multiplier for short text
-        const heightThreshold = 2.0; // Threshold to determine "long" text
+        const bottomY = 1.0;
+        const baseMultiplier = 0.3;
+        const heightThreshold = 2.0;
         let adaptiveMultiplier;
 
         if (maxScrollRef.current <= heightThreshold) {
-          // Short text: use base multiplier
           adaptiveMultiplier = baseMultiplier;
         } else {
-          // Long text: gradually increase multiplier based on length
           const extraHeight = maxScrollRef.current - heightThreshold;
           adaptiveMultiplier = baseMultiplier + extraHeight * 0.15;
         }
 
         const topY = bottomY + maxScrollRef.current * adaptiveMultiplier;
-
-        // Calculate new position (add delta)
         let newPosition = currentPos + delta;
-
-        // Clamp between bottom and top boundaries
         newPosition = Math.max(bottomY, Math.min(topY, newPosition));
 
         textGroupRef.current.position.y = newPosition;
         scrollPositionRef.current = newPosition;
-
-        console.log("Scroll Debug:", {
-          deltaY: event.deltaY,
-          delta,
-          currentPos,
-          newPosition,
-          topY,
-          bottomY,
-          totalHeight: maxScrollRef.current,
-          adaptiveMultiplier,
-          textLines: maxScrollRef.current / (0.1 * 1.4),
-          direction: event.deltaY > 0 ? "scrolling down" : "scrolling up",
-        });
       }
     };
 
@@ -294,6 +230,7 @@ export default function OverlayCube({
     }
   }, [currentText, updateTextFn]);
 
+  // Initialize scenes and renderer
   useEffect(() => {
     let container = document.getElementById("overlay-cube-canvas");
     if (!container) {
@@ -304,7 +241,6 @@ export default function OverlayCube({
       container.style.pointerEvents = "none";
       container.style.zIndex = "50";
 
-      // Add semi-transparent background div
       const backgroundDiv = document.createElement("div");
       backgroundDiv.style.position = "absolute";
       backgroundDiv.style.left = "50%";
@@ -313,30 +249,32 @@ export default function OverlayCube({
       backgroundDiv.style.width = "80%";
       backgroundDiv.style.maxWidth = "700px";
       backgroundDiv.style.height = "60%";
-      backgroundDiv.style.backgroundColor = "rgba(0, 0, 0, 0.8)";
+      backgroundDiv.style.backgroundColor = "rgb(0, 0, 0)";
       backgroundDiv.style.border = "1px solid rgba(255, 255, 255, 0.2)";
+      backgroundDiv.style.borderRadius = "0.5rem";
       backgroundDiv.style.zIndex = "1";
 
       container.appendChild(backgroundDiv);
-
       document.body.appendChild(container);
     }
 
+    // Main scene setup
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // Calculate camera parameters based on div dimensions
-    const divHeight = window.innerHeight * 0.6; // 60% of viewport height
-    const divWidth = Math.min(window.innerWidth * 0.8, 700); // 80% of viewport width, max 700px
+    // Cube scene setup
+    const cubeScene = new THREE.Scene();
+    cubeSceneRef.current = cubeScene;
+
+    const divHeight = window.innerHeight * 0.6;
+    const divWidth = Math.min(window.innerWidth * 0.8, 700);
     const aspect = divWidth / divHeight;
 
-    const camera = new THREE.PerspectiveCamera(
-      50, // Reduced FOV for better text containment
-      aspect,
-      0.1,
-      1000
-    );
-    camera.position.z = 3; // Moved camera closer
+    const camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 1000);
+    camera.position.z = 3;
+
+    const cubeCamera = new THREE.PerspectiveCamera(50, aspect, 0.1, 1000);
+    cubeCamera.position.z = 3;
 
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -344,7 +282,7 @@ export default function OverlayCube({
       powerPreference: "high-performance",
     });
     renderer.setClearColor(0x000000, 0);
-    renderer.setSize(divWidth, divHeight); // Set renderer size to match div
+    renderer.setSize(divWidth, divHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -353,25 +291,92 @@ export default function OverlayCube({
     renderer.domElement.style.top = "50%";
     renderer.domElement.style.transform = "translate(-50%, -50%)";
     renderer.domElement.style.zIndex = "2";
+    rendererRef.current = renderer;
 
     container.appendChild(renderer.domElement);
 
-    const material = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
-      metalness: 0.0, // Reduced metalness for whiter appearance
-      roughness: 0.2, // Reduced roughness for more shine
-      clearcoat: 0.0, // Removed clearcoat for pure white
-      emissive: 0xffffff, // Added emissive for extra brightness
-      emissiveIntensity: 0.2, // Subtle emission
+    // Setup cube
+    const cubeGeometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+    const cubeMaterial = new THREE.MeshPhongMaterial({
+      color: 0x00ffff,
+      shininess: 100,
+      specular: 0x444444,
+      transparent: true,
+      opacity: 0.8,
     });
+    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+    cube.position.set(0, 0.2, 0);
+    cubeScene.add(cube);
+    cubeRef.current = cube;
+
+    // Add lights for the cube
+    const cubeAmbientLight = new THREE.AmbientLight(0x404040);
+    const cubePointLight = new THREE.PointLight(0x00ffff, 1);
+    cubePointLight.position.set(2, 2, 2);
+    cubeScene.add(cubeAmbientLight);
+    cubeScene.add(cubePointLight);
+
+    // Create environment map for reflections
+    const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256);
+    const envCamera = new THREE.CubeCamera(0.1, 10, cubeRenderTarget);
+    scene.environment = cubeRenderTarget.texture;
+
+    let time = 0;
+    function animate(currentTime: number) {
+      time += 0.01;
+
+      // Animate the cube
+      if (cubeRef.current) {
+        cubeRef.current.rotation.x = time * 0.5;
+        cubeRef.current.rotation.y = time * 0.3;
+      }
+
+      // Process text animations if any
+      animationsRef.current = animationsRef.current.filter((anim) =>
+        anim(currentTime)
+      );
+
+      // Update environment map periodically
+      if (Math.floor(time * 10) % 30 === 0) {
+        envCamera.update(renderer, scene);
+      }
+
+      // Render both scenes
+      renderer.autoClear = false;
+      renderer.clear();
+      renderer.render(scene, camera);
+      renderer.render(cubeScene, cubeCamera);
+
+      animationFrameRef.current = requestAnimationFrame(animate);
+    }
+
+    // Start animation loop
+    animate(performance.now());
+
+    // Update resize handler
+    function handleResize() {
+      const newDivHeight = window.innerHeight * 0.6;
+      const newDivWidth = Math.min(window.innerWidth * 0.8, 700);
+      const newAspect = newDivWidth / newDivHeight;
+
+      camera.aspect = newAspect;
+      camera.updateProjectionMatrix();
+      cubeCamera.aspect = newAspect;
+      cubeCamera.updateProjectionMatrix();
+      renderer.setSize(newDivWidth, newDivHeight);
+    }
+    window.addEventListener("resize", handleResize);
+
+    // Enable clipping in the renderer
+    renderer.localClippingEnabled = true;
 
     const fontLoader = new FontLoader();
     fontLoader.load("/fonts/helvetiker_regular.typeface.json", (font) => {
       let currentMesh: THREE.Group | null = null;
 
       // Text configuration constants
-      const maxCharsPerLine = 55; // Slightly reduced to account for padding
-      const fontSize = 0.085; // Keep smaller font size
+      const maxCharsPerLine = 55;
+      const fontSize = 0.085;
       const lineSpacing = 1.6;
       const leftMargin = -1.3;
 
@@ -421,24 +426,22 @@ export default function OverlayCube({
             const geometry = new TextGeometry(line, {
               font: font,
               size: fontSize,
-              height: 0.012, // Reduced depth
-              curveSegments: 3, // Reduced segments
+              height: 0.012,
+              curveSegments: 3,
               bevelEnabled: true,
-              bevelThickness: 0.004, // Smaller bevel thickness
-              bevelSize: 0.003, // Smaller bevel size
-              bevelSegments: 2, // Reduced bevel segments
+              bevelThickness: 0.004,
+              bevelSize: 0.003,
+              bevelSegments: 2,
             } as ExtendedTextGeometryParameters);
 
             const textMesh = new THREE.Mesh(geometry, sharedMaterial.clone());
             textMesh.material.opacity = 0;
             const lineY = -i * fontSize * lineSpacing;
-            // Position text with left alignment
             textMesh.position.set(leftMargin, lineY, 0);
             textMesh.castShadow = true;
             textMesh.receiveShadow = true;
             group.add(textMesh);
 
-            // Use setTimeout to ensure geometry is processed
             setTimeout(resolve, 0);
           });
         });
@@ -453,7 +456,7 @@ export default function OverlayCube({
 
           // Start fade animation after everything is loaded
           const startTime = performance.now();
-          const fadeInDuration = 700; // 0.7 seconds
+          const fadeInDuration = 700;
           const fadeProgress = { value: 0 };
 
           const updateFade = (currentTime: number) => {
@@ -474,7 +477,6 @@ export default function OverlayCube({
             return fadeProgress.value < 1;
           };
 
-          // Add fade animation to the animation queue
           animationsRef.current.push(updateFade);
         });
       };
@@ -487,12 +489,7 @@ export default function OverlayCube({
         updateText(currentText);
       }
 
-      // Create environment map for reflections
-      const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256);
-      const cubeCamera = new THREE.CubeCamera(0.1, 10, cubeRenderTarget);
-      scene.environment = cubeRenderTarget.texture;
-
-      // Lighting adjustments for shimmery appearance
+      // Add original lighting for text
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
       scene.add(ambientLight);
 
@@ -516,95 +513,27 @@ export default function OverlayCube({
       const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
       rimLight.position.set(0, 0, -1);
       scene.add(rimLight);
-
-      // Animation
-      let running = true;
-      let time = 0;
-
-      function animate(currentTime: number) {
-        if (!running) return;
-
-        time += 0.01;
-
-        // Process all active animations
-        animationsRef.current = animationsRef.current.filter((anim) =>
-          anim(currentTime)
-        );
-
-        // Animate moving lights
-        if (movingLight1 && movingLight2) {
-          movingLight1.position.x = Math.sin(time * 0.5) * 3;
-          movingLight1.position.y = Math.cos(time * 0.5) * 2;
-
-          movingLight2.position.x = -Math.sin(time * 0.7) * 3;
-          movingLight2.position.y = -Math.cos(time * 0.7) * 2;
-        }
-
-        if (currentMesh) {
-          // Gentle floating motion
-          currentMesh.position.y += Math.sin(time) * 0.0001;
-
-          // Add gentle back-and-forth rotation
-          const rotationSpeed = 0.15; // Even slower for more fluid motion
-          const rotationAmount = 0.08; // Slightly more rotation (about 4.6 degrees)
-          currentMesh.rotation.y =
-            Math.sin(time * rotationSpeed) * rotationAmount;
-
-          // Update environment map periodically for dynamic reflections
-          if (Math.floor(time * 10) % 30 === 0) {
-            currentMesh.visible = false;
-            cubeCamera.update(renderer, scene);
-            currentMesh.visible = true;
-          }
-        }
-
-        renderer.render(scene, camera);
-        requestAnimationFrame(animate);
-      }
-
-      // Start animation loop
-      animate(performance.now());
-
-      // Update resize handler
-      function handleResize() {
-        const newDivHeight = window.innerHeight * 0.6;
-        const newDivWidth = Math.min(window.innerWidth * 0.8, 700);
-        const newAspect = newDivWidth / newDivHeight;
-
-        camera.aspect = newAspect;
-        camera.updateProjectionMatrix();
-        renderer.setSize(newDivWidth, newDivHeight);
-      }
-      window.addEventListener("resize", handleResize);
-
-      // Enable clipping in the renderer
-      renderer.localClippingEnabled = true;
-
-      // Cleanup
-      return () => {
-        running = false;
-        window.removeEventListener("resize", handleResize);
-        renderer.dispose();
-        material.dispose();
-        if (currentMesh) {
-          currentMesh.traverse((child) => {
-            if (child instanceof THREE.Mesh) {
-              child.geometry.dispose();
-            }
-          });
-        }
-        if (container && container.contains(renderer.domElement)) {
-          container.removeChild(renderer.domElement);
-        }
-      };
     });
 
+    // Cleanup
     return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      window.removeEventListener("resize", handleResize);
+      renderer.dispose();
+      if (currentMeshRef.current) {
+        currentMeshRef.current.traverse((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+          }
+        });
+      }
       if (container && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
     };
-  }, [materials]);
+  }, []); // Empty dependency array - only run once on mount
 
   return null;
 }

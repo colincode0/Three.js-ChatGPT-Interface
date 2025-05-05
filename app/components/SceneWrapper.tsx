@@ -7,21 +7,30 @@ import { useState } from "react";
 
 export default function SceneWrapper() {
   const [shouldFadeOut, setShouldFadeOut] = useState(false);
-  const chatProps = useChat();
+  const { messages, isLoading: isChatLoading, ...restChatProps } = useChat();
 
   // Handle chat events using the returned methods
-  const handleSubmit = chatProps.handleSubmit;
+  const handleSubmit = restChatProps.handleSubmit;
   const wrappedHandleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     setShouldFadeOut(true);
     await handleSubmit(e);
   };
 
-  chatProps.handleSubmit = wrappedHandleSubmit;
+  const chatProps = {
+    ...restChatProps,
+    messages,
+    isLoading: isChatLoading,
+    handleSubmit: wrappedHandleSubmit,
+  };
 
   return (
     <>
       <Scene chatProps={chatProps} />
-      <OverlayCube chatProps={chatProps} shouldFadeOut={shouldFadeOut} />
+      <OverlayCube
+        messages={messages}
+        isChatLoading={isChatLoading}
+        shouldFadeOut={shouldFadeOut}
+      />
     </>
   );
 }
