@@ -98,6 +98,7 @@ export default function OverlayCube({
 
   // Handle loading state changes
   useEffect(() => {
+    console.log("Loading state changed:", isChatLoading);
     if (isChatLoading) {
       console.log("Loading started");
       // When loading starts, fade out current text and show cube
@@ -176,6 +177,36 @@ export default function OverlayCube({
         material.opacity = 1;
         cubeOpacityRef.current = 1;
       }
+    } else if (pendingTextRef.current && !isTransitioningRef.current) {
+      // When loading completes, check if we have pending text
+      console.log("Loading complete, checking for pending text");
+      if (cubeRef.current) {
+        console.log("Fading out cube");
+        isTransitioningRef.current = true;
+        const startTime = performance.now();
+        const duration = 400;
+
+        const fadeOutCube = () => {
+          const currentTime = performance.now();
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+
+          const material = cubeRef.current!.material as THREE.MeshPhongMaterial;
+          material.opacity = 1 - progress;
+          cubeOpacityRef.current = 1 - progress;
+
+          if (progress < 1) {
+            requestAnimationFrame(fadeOutCube);
+          } else {
+            console.log("Cube fade out complete, rendering new text");
+            setCurrentText(pendingTextRef.current!);
+            pendingTextRef.current = null;
+            isTransitioningRef.current = false;
+          }
+        };
+
+        fadeOutCube();
+      }
     }
   }, [isChatLoading]);
 
@@ -183,11 +214,21 @@ export default function OverlayCube({
   useEffect(() => {
     if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
-      if (lastMessage.role === "assistant" && !isChatLoading) {
+      console.log("Message received:", {
+        role: lastMessage.role,
+        isChatLoading,
+      });
+
+      // Store the message when it's from assistant, regardless of loading state
+      if (lastMessage.role === "assistant") {
         // Only store new messages
         if (lastMessage.id !== lastMessageIdRef.current) {
           console.log("New message received, storing for later");
           lastMessageIdRef.current = lastMessage.id;
+          pendingTextRef.current = lastMessage.content;
+        } else if (lastMessage.id === lastMessageIdRef.current) {
+          // Update the pending text with the latest content
+          console.log("Updating pending text with latest content");
           pendingTextRef.current = lastMessage.content;
         }
       }
@@ -197,7 +238,16 @@ export default function OverlayCube({
   // Listen for camera movement completion
   useEffect(() => {
     const handleCameraMovementComplete = () => {
-      console.log("Camera movement complete");
+      console.log(
+        "Camera movement complete, pending text:",
+        !!pendingTextRef.current
+      );
+      // Only handle camera movement if we're still loading
+      if (isChatLoading) {
+        console.log("Still loading, waiting for completion");
+        return;
+      }
+
       if (
         pendingTextRef.current &&
         updateTextFn &&
@@ -245,7 +295,7 @@ export default function OverlayCube({
         "cameraMovementComplete",
         handleCameraMovementComplete
       );
-  }, [updateTextFn]);
+  }, [updateTextFn, isChatLoading]);
 
   // Update scroll handler
   useEffect(() => {
