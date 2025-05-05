@@ -109,82 +109,84 @@ export default function OverlayCube({
     if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === "assistant") {
-        console.log("New message received, starting transition");
-        // Store the new text
+        // Store the new text but don't trigger transition yet
         pendingTextRef.current = lastMessage.content;
-
-        // If we have current text, fade it out and show cube
-        if (
-          currentMeshRef.current &&
-          sceneRef.current &&
-          !isTransitioningRef.current
-        ) {
-          console.log("Fading out current text and showing cube");
-          isTransitioningRef.current = true;
-          const meshToFadeOut = currentMeshRef.current;
-          const startTime = performance.now();
-          const duration = 400;
-
-          const fadeOut = () => {
-            const currentTime = performance.now();
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-
-            meshToFadeOut.traverse((child) => {
-              if (child instanceof THREE.Mesh) {
-                const material = child.material as THREE.MeshPhysicalMaterial;
-                if (material.opacity !== undefined) {
-                  material.opacity = 1 - progress;
-                }
-              }
-            });
-
-            if (progress < 1) {
-              requestAnimationFrame(fadeOut);
-            } else {
-              console.log("Text fade out complete, showing cube");
-              sceneRef.current?.remove(meshToFadeOut);
-              meshToFadeOut.traverse((child) => {
-                if (child instanceof THREE.Mesh) {
-                  child.geometry.dispose();
-                  (child.material as THREE.Material).dispose();
-                }
-              });
-              currentMeshRef.current = null;
-
-              // Fade in cube immediately
-              if (cubeRef.current) {
-                const startTime = performance.now();
-                const duration = 400;
-
-                const fadeInCube = () => {
-                  const currentTime = performance.now();
-                  const elapsed = currentTime - startTime;
-                  const progress = Math.min(elapsed / duration, 1);
-
-                  const material = cubeRef.current!
-                    .material as THREE.MeshPhongMaterial;
-                  material.opacity = progress;
-                  cubeOpacityRef.current = progress;
-
-                  if (progress < 1) {
-                    requestAnimationFrame(fadeInCube);
-                  } else {
-                    console.log("Cube fade in complete");
-                    isTransitioningRef.current = false;
-                  }
-                };
-
-                fadeInCube();
-              }
-            }
-          };
-
-          fadeOut();
-        }
       }
     }
   }, [messages]);
+
+  // Handle transitions when loading state changes
+  useEffect(() => {
+    if (
+      isChatLoading &&
+      currentMeshRef.current &&
+      sceneRef.current &&
+      !isTransitioningRef.current
+    ) {
+      console.log("Chat loading started, fading out text and showing cube");
+      isTransitioningRef.current = true;
+      const meshToFadeOut = currentMeshRef.current;
+      const startTime = performance.now();
+      const duration = 400;
+
+      const fadeOut = () => {
+        const currentTime = performance.now();
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        meshToFadeOut.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            const material = child.material as THREE.MeshPhysicalMaterial;
+            if (material.opacity !== undefined) {
+              material.opacity = 1 - progress;
+            }
+          }
+        });
+
+        if (progress < 1) {
+          requestAnimationFrame(fadeOut);
+        } else {
+          console.log("Text fade out complete, showing cube");
+          sceneRef.current?.remove(meshToFadeOut);
+          meshToFadeOut.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              (child.material as THREE.Material).dispose();
+            }
+          });
+          currentMeshRef.current = null;
+
+          // Fade in cube immediately
+          if (cubeRef.current) {
+            const startTime = performance.now();
+            const duration = 400;
+
+            const fadeInCube = () => {
+              const currentTime = performance.now();
+              const elapsed = currentTime - startTime;
+              const progress = Math.min(elapsed / duration, 1);
+
+              const material = cubeRef.current!
+                .material as THREE.MeshPhongMaterial;
+              material.opacity = progress;
+              cubeOpacityRef.current = progress;
+
+              if (progress < 1) {
+                requestAnimationFrame(fadeInCube);
+              } else {
+                console.log("Cube fade in complete");
+                isTransitioningRef.current = false;
+              }
+            };
+
+            fadeInCube();
+          }
+        }
+      };
+
+      fadeOut();
+    }
+  }, [isChatLoading]);
 
   // Listen for camera movement completion
   useEffect(() => {
