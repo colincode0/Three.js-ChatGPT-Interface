@@ -203,6 +203,7 @@ function Scene({ chatProps }: SceneProps) {
   // Listen for text render complete event
   useEffect(() => {
     const startDrifting = () => {
+      console.log("Text render complete, enabling input and starting drift");
       if (cameraRef.current) {
         isDriftingRef.current = true;
         driftStartTimeRef.current = performance.now();
@@ -215,6 +216,9 @@ function Scene({ chatProps }: SceneProps) {
         targetDriftVelocityRef.current.copy(
           moveDirection.multiplyScalar(driftSpeed)
         );
+
+        // Enable input as soon as text is rendered
+        setCanInput(true);
       }
     };
 
@@ -261,6 +265,8 @@ function Scene({ chatProps }: SceneProps) {
         return;
 
       try {
+        console.log("Form submitted, disabling input");
+        setCanInput(false);
         await handleChatSubmit(e);
         setInput(""); // Clear input after submit
         // Reset textarea height
@@ -281,9 +287,9 @@ function Scene({ chatProps }: SceneProps) {
 
         animationProgressRef.current = 0;
         isAnimatingRef.current = true;
-        setCanInput(false);
       } catch (error) {
         console.error("Error submitting form:", error);
+        setCanInput(true); // Re-enable input on error
       }
     },
     [handleChatSubmit, isChatLoading, setInput]
@@ -503,9 +509,8 @@ function Scene({ chatProps }: SceneProps) {
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
           animationProgressRef.current = 1;
-          setTimeout(() => {
-            setCanInput(true);
-          }, 200);
+          // Emit camera movement complete event
+          window.dispatchEvent(new CustomEvent("cameraMovementComplete"));
         }
 
         const t = animationProgressRef.current;

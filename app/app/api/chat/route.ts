@@ -17,19 +17,11 @@ export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    // Add system message to encourage brevity
-    const systemMessage = {
-      role: "system",
-      content:
-        "You are a concise assistant. Keep your responses brief and to the point, ideally under 100 words.",
-    };
-
     // Create a chat completion
     const response = await openai.chat.completions.create({
       model: "gpt-4-turbo-preview",
       stream: true,
-      messages: [systemMessage, ...messages],
-      max_tokens: 150, // Limit response length
+      messages: messages,
       temperature: 0.7, // Slightly reduce randomness
     });
 
