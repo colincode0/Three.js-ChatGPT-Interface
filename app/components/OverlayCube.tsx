@@ -25,51 +25,46 @@ function cleanText(text: string): string {
   return cleanedText;
 }
 
-function wrapText(text: string, maxCharsPerLine: number): string[] {
-  // Clean the text first
-  const cleanedText = cleanText(text);
-  console.log("Wrapping text:", cleanedText);
-  console.log("Max chars per line:", maxCharsPerLine);
+// Pre-create reusable vectors and objects to avoid garbage collection
+const TEMP_VECTOR = new THREE.Vector3();
+const TEMP_VECTOR2 = new THREE.Vector2();
 
-  // Split by actual newlines first to preserve paragraph structure
+// Cache common values
+const FADE_DURATION = 400;
+const ANIMATION_SPEED = 0.01;
+const CUBE_ROTATION_SPEED = { x: 0.5, y: 0.3 };
+const LIGHT_ORBIT_SPEED = 0.5;
+const TEXT_MOVEMENT_SPEED = 0.3;
+const TEXT_MOVEMENT_AMPLITUDE = 0.05;
+const ENV_MAP_UPDATE_INTERVAL = 30;
+
+// Optimize text wrapping function
+function wrapText(text: string, maxCharsPerLine: number): string[] {
+  const cleanedText = cleanText(text);
   const paragraphs = cleanedText.split(/\n/);
   const lines: string[] = [];
+  const words = paragraphs
+    .join(" ")
+    .split(" ")
+    .filter((word) => word.length > 0);
 
-  for (const paragraph of paragraphs) {
-    if (paragraph.trim() === "") {
-      // Preserve empty lines
-      lines.push("");
-      continue;
+  let currentLine = "";
+  let currentLineLength = 0;
+
+  for (const word of words) {
+    const effectiveLength = word.length + Math.ceil(word.length * 0.1);
+
+    if (currentLineLength + effectiveLength + 1 <= maxCharsPerLine) {
+      currentLine = currentLine ? `${currentLine} ${word}` : word;
+      currentLineLength += effectiveLength + 1;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+      currentLineLength = effectiveLength;
     }
-
-    const words = paragraph.split(" ").filter((word) => word.length > 0);
-    let currentLine = "";
-    let currentLineLength = 0;
-
-    for (const word of words) {
-      const wordLength = word.length;
-      // Add extra padding to account for character width variations
-      const effectiveLength = wordLength + Math.ceil(wordLength * 0.1);
-
-      if (currentLineLength + effectiveLength + 1 <= maxCharsPerLine) {
-        if (currentLine) {
-          currentLine += " " + word;
-          currentLineLength += effectiveLength + 1;
-        } else {
-          currentLine = word;
-          currentLineLength = effectiveLength;
-        }
-      } else {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-        currentLineLength = effectiveLength;
-      }
-    }
-    if (currentLine) lines.push(currentLine);
   }
+  if (currentLine) lines.push(currentLine);
 
-  console.log("Wrapped lines:", lines);
-  console.log("Number of lines:", lines.length);
   return lines;
 }
 
@@ -103,7 +98,7 @@ export default function OverlayCube({
     console.log("Loading state changed:", isChatLoading);
     if (isChatLoading) {
       console.log("Loading started");
-      // When loading starts, fade out current text and show cube
+      // When loading starts, fade out current text
       if (
         currentMeshRef.current &&
         sceneRef.current &&
@@ -113,26 +108,28 @@ export default function OverlayCube({
         isTransitioningRef.current = true;
         const meshToFadeOut = currentMeshRef.current;
         const startTime = performance.now();
-        const duration = 400;
 
         const fadeOut = () => {
-          const currentTime = performance.now();
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
+          const elapsed = performance.now() - startTime;
+          const progress = Math.min(elapsed / FADE_DURATION, 1);
 
+          // Smooth easing
+          const easedProgress =
+            progress < 0.5
+              ? 4 * progress * progress * progress
+              : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+          // Update opacity
           meshToFadeOut.traverse((child) => {
             if (child instanceof THREE.Mesh) {
               const material = child.material as THREE.MeshPhysicalMaterial;
-              if (material.opacity !== undefined) {
-                material.opacity = 1 - progress;
-              }
+              material.opacity = 1 - easedProgress;
             }
           });
 
           if (progress < 1) {
             requestAnimationFrame(fadeOut);
           } else {
-            console.log("Text fade out complete");
             sceneRef.current?.remove(meshToFadeOut);
             meshToFadeOut.traverse((child) => {
               if (child instanceof THREE.Mesh) {
@@ -145,24 +142,24 @@ export default function OverlayCube({
 
             // Fade in cube after text is gone
             if (cubeRef.current) {
-              console.log("Fading in cube");
               const startTime = performance.now();
-              const duration = 400;
-
               const fadeInCube = () => {
-                const currentTime = performance.now();
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / duration, 1);
+                const elapsed = performance.now() - startTime;
+                const progress = Math.min(elapsed / FADE_DURATION, 1);
+
+                // Smooth easing
+                const easedProgress =
+                  progress < 0.5
+                    ? 4 * progress * progress * progress
+                    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
                 const material = cubeRef.current!
                   .material as THREE.MeshPhongMaterial;
-                material.opacity = progress;
-                cubeOpacityRef.current = progress;
+                material.opacity = easedProgress;
+                cubeOpacityRef.current = easedProgress;
 
                 if (progress < 1) {
                   requestAnimationFrame(fadeInCube);
-                } else {
-                  console.log("Cube fade in complete");
                 }
               };
 
@@ -186,12 +183,11 @@ export default function OverlayCube({
         console.log("Fading out cube");
         isTransitioningRef.current = true;
         const startTime = performance.now();
-        const duration = 400;
 
         const fadeOutCube = () => {
           const currentTime = performance.now();
           const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
+          const progress = Math.min(elapsed / FADE_DURATION, 1);
 
           const material = cubeRef.current!.material as THREE.MeshPhongMaterial;
           material.opacity = 1 - progress;
@@ -201,6 +197,7 @@ export default function OverlayCube({
             requestAnimationFrame(fadeOutCube);
           } else {
             console.log("Cube fade out complete, rendering new text");
+            // Only set the text after cube is fully faded out
             setCurrentText(pendingTextRef.current!);
             pendingTextRef.current = null;
             isTransitioningRef.current = false;
@@ -431,45 +428,57 @@ export default function OverlayCube({
     const envCamera = new THREE.CubeCamera(0.1, 10, cubeRenderTarget);
     scene.environment = cubeRenderTarget.texture;
 
+    // Animation
     let time = 0;
     function animate(currentTime: number) {
-      time += 0.01;
+      time += ANIMATION_SPEED;
 
-      // Animate the cube
+      // Batch matrix updates
       if (cubeRef.current) {
-        cubeRef.current.rotation.x = time * 0.5;
-        cubeRef.current.rotation.y = time * 0.3;
+        cubeRef.current.rotation.x = time * CUBE_ROTATION_SPEED.x;
+        cubeRef.current.rotation.y = time * CUBE_ROTATION_SPEED.y;
       }
 
-      // Animate moving lights
+      // Optimize light movement calculations
       if (movingLight1Ref.current && movingLight2Ref.current) {
-        movingLight1Ref.current.position.x = Math.sin(time * 0.5) * 2;
-        movingLight1Ref.current.position.z = Math.cos(time * 0.5) * 2;
-        movingLight2Ref.current.position.x = Math.sin(time * 0.5 + Math.PI) * 2;
-        movingLight2Ref.current.position.z = Math.cos(time * 0.5 + Math.PI) * 2;
+        const sinTime = Math.sin(time * LIGHT_ORBIT_SPEED);
+        const cosTime = Math.cos(time * LIGHT_ORBIT_SPEED);
+        const sinTimePI = Math.sin(time * LIGHT_ORBIT_SPEED + Math.PI);
+        const cosTimePI = Math.cos(time * LIGHT_ORBIT_SPEED + Math.PI);
+
+        movingLight1Ref.current.position.set(sinTime * 2, 0, cosTime * 2);
+        movingLight2Ref.current.position.set(sinTimePI * 2, 0, cosTimePI * 2);
       }
 
-      // Animate text group if it exists
+      // Optimize text movement
       if (textGroupRef.current) {
-        // Subtle z-axis movement
-        textGroupRef.current.position.z = Math.sin(time * 0.3) * 0.05;
+        textGroupRef.current.position.z =
+          Math.sin(time * TEXT_MOVEMENT_SPEED) * TEXT_MOVEMENT_AMPLITUDE;
       }
 
-      // Process text animations if any
-      animationsRef.current = animationsRef.current.filter((anim) =>
-        anim(currentTime)
-      );
+      // Process text animations
+      if (animationsRef.current.length > 0) {
+        console.log("Processing animations:", animationsRef.current.length);
+        const remainingAnimations = [];
+        for (const anim of animationsRef.current) {
+          const result = anim(currentTime);
+          if (result) {
+            remainingAnimations.push(anim);
+          }
+        }
+        animationsRef.current = remainingAnimations;
+      }
 
-      // Update environment map periodically
-      if (Math.floor(time * 10) % 30 === 0) {
+      // Update environment map less frequently
+      if (Math.floor(time * 10) % ENV_MAP_UPDATE_INTERVAL === 0) {
         envCamera.update(renderer, scene);
       }
 
-      // Render both scenes
+      // Optimize rendering
       renderer.autoClear = false;
       renderer.clear();
       renderer.render(scene, camera);
-      // Only render cube scene if cube is visible
+
       if (cubeOpacityRef.current > 0) {
         renderer.render(cubeScene, cubeCamera);
       }
@@ -480,17 +489,22 @@ export default function OverlayCube({
     // Start animation loop
     animate(performance.now());
 
-    // Update resize handler
+    // Optimize resize handler with debounce
+    let resizeTimeout: NodeJS.Timeout;
     function handleResize() {
-      const newDivHeight = window.innerHeight * 0.6;
-      const newDivWidth = Math.min(window.innerWidth * 0.8, 700);
-      const newAspect = newDivWidth / newDivHeight;
+      if (resizeTimeout) clearTimeout(resizeTimeout);
 
-      camera.aspect = newAspect;
-      camera.updateProjectionMatrix();
-      cubeCamera.aspect = newAspect;
-      cubeCamera.updateProjectionMatrix();
-      renderer.setSize(newDivWidth, newDivHeight);
+      resizeTimeout = setTimeout(() => {
+        const newDivHeight = window.innerHeight * 0.6;
+        const newDivWidth = Math.min(window.innerWidth * 0.8, 700);
+        const newAspect = newDivWidth / newDivHeight;
+
+        camera.aspect = newAspect;
+        camera.updateProjectionMatrix();
+        cubeCamera.aspect = newAspect;
+        cubeCamera.updateProjectionMatrix();
+        renderer.setSize(newDivWidth, newDivHeight);
+      }, 250);
     }
     window.addEventListener("resize", handleResize);
 
@@ -507,10 +521,8 @@ export default function OverlayCube({
       const lineSpacing = 1.6;
       const leftMargin = -1.3;
 
-      // Create update function
+      // Optimize text update function
       const updateText = (text: string) => {
-        console.log("Starting text update");
-        // Remove old mesh immediately
         if (currentMesh) {
           scene.remove(currentMesh);
           currentMesh.traverse((child) => {
@@ -531,7 +543,7 @@ export default function OverlayCube({
         const totalHeight = lines.length * fontSize * lineSpacing;
         maxScrollRef.current = totalHeight;
 
-        // Create shared material for all text
+        // Create shared material once
         const sharedMaterial = new THREE.MeshPhysicalMaterial({
           color: 0xffffff,
           metalness: 0.8,
@@ -543,15 +555,13 @@ export default function OverlayCube({
           envMapIntensity: 1.5,
           transparent: true,
           opacity: 0,
-          alphaTest: 0,
           depthWrite: false,
-          blending: THREE.NormalBlending,
         });
 
-        // Create meshes array to track loading
-        const meshPromises = lines.map((line, i) => {
-          return new Promise<void>((resolve) => {
-            const geometry = new TextGeometry(line, {
+        // Batch geometry creation
+        const geometries = lines.map(
+          (line) =>
+            new TextGeometry(line, {
               font: font,
               size: fontSize,
               height: 0.012,
@@ -560,55 +570,80 @@ export default function OverlayCube({
               bevelThickness: 0.004,
               bevelSize: 0.003,
               bevelSegments: 2,
-            } as ExtendedTextGeometryParameters);
+            } as ExtendedTextGeometryParameters)
+        );
 
-            const textMesh = new THREE.Mesh(geometry, sharedMaterial.clone());
-            textMesh.material.opacity = 0;
-            const lineY = -i * fontSize * lineSpacing;
-            textMesh.position.set(leftMargin, lineY, 0);
-            textMesh.castShadow = true;
-            textMesh.receiveShadow = true;
-            group.add(textMesh);
-
-            setTimeout(resolve, 0);
-          });
+        // Create meshes in a single batch
+        geometries.forEach((geometry, i) => {
+          const textMesh = new THREE.Mesh(geometry, sharedMaterial.clone());
+          textMesh.position.set(leftMargin, -i * fontSize * lineSpacing, 0);
+          textMesh.castShadow = true;
+          textMesh.receiveShadow = true;
+          group.add(textMesh);
         });
 
-        // Wait for all meshes to be created and added
-        Promise.all(meshPromises).then(() => {
-          console.log("All text meshes created, starting fade in");
-          currentMesh = group;
-          currentMeshRef.current = group;
-          group.position.set(0, 1.0, 0);
-          scrollPositionRef.current = 1.0;
-          scene.add(group);
+        currentMesh = group;
+        currentMeshRef.current = group;
+        group.position.set(0, 1.0, 0);
+        scrollPositionRef.current = 1.0;
+        scene.add(group);
 
-          // Start fade animation after everything is loaded
-          const startTime = performance.now();
-          const fadeInDuration = 700;
-          const fadeProgress = { value: 0 };
+        // Simple fade in animation
+        const startTime = performance.now();
+        const fadeIn = () => {
+          const elapsed = performance.now() - startTime;
+          const progress = Math.min(elapsed / FADE_DURATION, 1);
 
-          const updateFade = (currentTime: number) => {
-            const elapsed = currentTime - startTime;
-            fadeProgress.value = Math.min(elapsed / fadeInDuration, 1);
+          // Smooth easing
+          const easedProgress =
+            progress < 0.5
+              ? 4 * progress * progress * progress
+              : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
-            group.traverse((child) => {
-              if (child instanceof THREE.Mesh) {
-                const material = child.material as THREE.MeshPhysicalMaterial;
-                material.opacity = fadeProgress.value;
-                material.needsUpdate = true;
-              }
-            });
-
-            if (fadeProgress.value >= 1) {
-              console.log("Text fade in complete");
-              window.dispatchEvent(new CustomEvent("textRenderComplete"));
+          // Update opacity
+          group.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              const material = child.material as THREE.MeshPhysicalMaterial;
+              material.opacity = easedProgress;
             }
-            return fadeProgress.value < 1;
-          };
+          });
 
-          animationsRef.current.push(updateFade);
-        });
+          if (progress < 1) {
+            requestAnimationFrame(fadeIn);
+          } else {
+            window.dispatchEvent(new CustomEvent("textRenderComplete"));
+          }
+        };
+
+        // Start fade in
+        requestAnimationFrame(fadeIn);
+
+        // Add original lighting for text
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const mainLight = new THREE.DirectionalLight(0xffffff, 3);
+        mainLight.position.set(2, 2, 1);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.width = 1024;
+        mainLight.shadow.mapSize.height = 1024;
+        scene.add(mainLight);
+
+        // Add moving lights for shimmer effect
+        const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
+        movingLight1.position.set(2, 0, 2);
+        scene.add(movingLight1);
+        movingLight1Ref.current = movingLight1;
+
+        const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
+        movingLight2.position.set(-2, 0, 2);
+        scene.add(movingLight2);
+        movingLight2Ref.current = movingLight2;
+
+        // Subtle rim light
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        rimLight.position.set(0, 0, -1);
+        scene.add(rimLight);
       };
 
       // Set the update function
@@ -618,33 +653,6 @@ export default function OverlayCube({
       if (currentText) {
         updateText(currentText);
       }
-
-      // Add original lighting for text
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-      scene.add(ambientLight);
-
-      const mainLight = new THREE.DirectionalLight(0xffffff, 3);
-      mainLight.position.set(2, 2, 1);
-      mainLight.castShadow = true;
-      mainLight.shadow.mapSize.width = 1024;
-      mainLight.shadow.mapSize.height = 1024;
-      scene.add(mainLight);
-
-      // Add moving lights for shimmer effect
-      const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
-      movingLight1.position.set(2, 0, 2);
-      scene.add(movingLight1);
-      movingLight1Ref.current = movingLight1;
-
-      const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
-      movingLight2.position.set(-2, 0, 2);
-      scene.add(movingLight2);
-      movingLight2Ref.current = movingLight2;
-
-      // Subtle rim light
-      const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
-      rimLight.position.set(0, 0, -1);
-      scene.add(rimLight);
     });
 
     // Cleanup

@@ -17,45 +17,40 @@ import { UseChatHelpers } from "ai/react";
 const HALF_PI = Math.PI / 2;
 const TEMP_VECTOR2 = new THREE.Vector2();
 const TEMP_SPHERICAL = new THREE.Spherical();
+const TEMP_VECTOR3 = new THREE.Vector3();
+
+// Cache common values
+const MAX_ANGLE_CHANGE = HALF_PI / 2;
+const MAX_DISTANCE = 0.8;
+const MIN_RADIUS = 1;
+const MAX_RADIUS = 2;
+const MIN_PHI = Math.PI / 6;
+const MAX_PHI = (5 * Math.PI) / 6;
+const DRIFT_SPEED = 0.0002;
+const MAX_DRIFT_SPEED = 0.0005;
+const ANIMATION_SPEED = 0.003;
+const RESIZE_DEBOUNCE = 250;
+const BLOOM_RESOLUTION = 2;
 
 // Function to generate random position near current position
 const getRandomPosition = (
   currentPosition: THREE.Vector3,
   out: THREE.Vector3
 ): THREE.Vector3 => {
-  // Maximum angle change (in radians) per click
-  const maxAngleChange = HALF_PI / 2; // 45 degrees
-  // Maximum distance to move from current position
-  const maxDistance = 0.8;
+  const angleOffset = (Math.random() * 2 - 1) * MAX_ANGLE_CHANGE;
+  const distanceOffset = Math.random() * MAX_DISTANCE;
 
-  // Generate random offset within constraints
-  const angleOffset = (Math.random() * 2 - 1) * maxAngleChange;
-  const distanceOffset = Math.random() * maxDistance;
-
-  // Convert current position to spherical coordinates
   TEMP_SPHERICAL.setFromVector3(currentPosition);
-
-  // Apply constrained random changes to spherical coordinates
-  // Constrain phi (vertical angle) to stay between 30 and 150 degrees
-  // This keeps the camera from going too high or too low
   TEMP_SPHERICAL.phi = Math.max(
-    Math.PI / 6, // 30 degrees
-    Math.min(
-      (5 * Math.PI) / 6, // 150 degrees
-      TEMP_SPHERICAL.phi + angleOffset
-    )
+    MIN_PHI,
+    Math.min(MAX_PHI, TEMP_SPHERICAL.phi + angleOffset)
   );
-
-  // Allow full rotation around the y-axis (theta)
-  TEMP_SPHERICAL.theta += (Math.random() * 2 - 1) * maxAngleChange;
-
-  // Keep radius within bounds
+  TEMP_SPHERICAL.theta += (Math.random() * 2 - 1) * MAX_ANGLE_CHANGE;
   TEMP_SPHERICAL.radius = Math.max(
-    1,
-    Math.min(2, TEMP_SPHERICAL.radius + distanceOffset)
+    MIN_RADIUS,
+    Math.min(MAX_RADIUS, TEMP_SPHERICAL.radius + distanceOffset)
   );
 
-  // Convert back to Cartesian coordinates using the provided output vector
   return out.setFromSpherical(TEMP_SPHERICAL);
 };
 
@@ -503,13 +498,11 @@ function Scene({ chatProps }: SceneProps) {
       if (!running) return;
 
       if (isAnimatingRef.current && cameraRef.current) {
-        // 0.003 * 1.3 = 0.0039 for 30% faster movement
-        animationProgressRef.current += 0.003;
+        animationProgressRef.current += ANIMATION_SPEED;
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
           animationProgressRef.current = 1;
-          // Emit camera movement complete event
           window.dispatchEvent(new CustomEvent("cameraMovementComplete"));
         }
 
@@ -540,21 +533,18 @@ function Scene({ chatProps }: SceneProps) {
       } else if (isDriftingRef.current && cameraRef.current) {
         const driftTime = (currentTime - driftStartTimeRef.current) / 1000;
         const driftProgress = Math.min(driftTime / 1.0, 1);
-        // Use cubic ease-in for smoother acceleration
         const easeInDrift = driftProgress * driftProgress * driftProgress;
 
-        const maxDriftSpeed = 0.0005;
-        targetDriftVelocityRef.current.clampLength(0, maxDriftSpeed);
+        targetDriftVelocityRef.current.clampLength(0, MAX_DRIFT_SPEED);
 
         const previousPosition = cameraRef.current.position.clone();
 
         if (driftTime > 10) {
           driftVelocityRef.current.lerp(new THREE.Vector3(0, 0, 0), 0.01);
         } else {
-          // Apply easing to the drift velocity
           driftVelocityRef.current.lerp(
             targetDriftVelocityRef.current,
-            easeInDrift * 0.1 // Reduced lerp factor for smoother transition
+            easeInDrift * 0.1
           );
         }
 
@@ -583,7 +573,7 @@ function Scene({ chatProps }: SceneProps) {
           );
 
           targetDriftVelocityRef.current.copy(
-            newDirection.multiplyScalar(maxDriftSpeed)
+            newDirection.multiplyScalar(MAX_DRIFT_SPEED)
           );
         }
       }
@@ -611,14 +601,14 @@ function Scene({ chatProps }: SceneProps) {
         const width = window.innerWidth;
         const height = window.innerHeight;
 
-        TEMP_VECTOR2.set(width / 2, height / 2);
+        TEMP_VECTOR2.set(width / BLOOM_RESOLUTION, height / BLOOM_RESOLUTION);
 
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
 
         renderer.setSize(width, height);
         composer.setSize(width, height);
-      }, 250); // Debounce resize events
+      }, RESIZE_DEBOUNCE);
     };
 
     window.addEventListener("resize", handleResize);
