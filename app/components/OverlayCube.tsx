@@ -533,21 +533,19 @@ export default function OverlayCube({
 
         // Create shared material for all text
         const sharedMaterial = new THREE.MeshPhysicalMaterial({
-          color: 0x00ffff,
-          metalness: 0.2,
-          roughness: 0.1,
-          reflectivity: 0.5,
-          clearcoat: 0.5,
+          color: 0xffffff,
+          metalness: 0.8,
+          roughness: 0.2,
+          reflectivity: 1.0,
+          clearcoat: 1.0,
           clearcoatRoughness: 0.1,
           flatShading: true,
-          envMapIntensity: 0.5,
+          envMapIntensity: 1.5,
           transparent: true,
           opacity: 0,
           alphaTest: 0,
           depthWrite: false,
           blending: THREE.NormalBlending,
-          emissive: 0x00ffff,
-          emissiveIntensity: 0.2,
         });
 
         // Create meshes array to track loading
@@ -622,10 +620,10 @@ export default function OverlayCube({
       }
 
       // Add original lighting for text
-      const ambientLight = new THREE.AmbientLight(0x00ffff, 0.7);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
       scene.add(ambientLight);
 
-      const mainLight = new THREE.DirectionalLight(0x00ffff, 3);
+      const mainLight = new THREE.DirectionalLight(0xffffff, 3);
       mainLight.position.set(2, 2, 1);
       mainLight.castShadow = true;
       mainLight.shadow.mapSize.width = 1024;
@@ -633,18 +631,18 @@ export default function OverlayCube({
       scene.add(mainLight);
 
       // Add moving lights for shimmer effect
-      const movingLight1 = new THREE.PointLight(0x00ffff, 1.2, 10);
+      const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
       movingLight1.position.set(2, 0, 2);
       scene.add(movingLight1);
       movingLight1Ref.current = movingLight1;
 
-      const movingLight2 = new THREE.PointLight(0x00ffff, 1.2, 10);
+      const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
       movingLight2.position.set(-2, 0, 2);
       scene.add(movingLight2);
       movingLight2Ref.current = movingLight2;
 
       // Subtle rim light
-      const rimLight = new THREE.DirectionalLight(0x00ffff, 0.9);
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
       rimLight.position.set(0, 0, -1);
       scene.add(rimLight);
     });
