@@ -37,6 +37,26 @@ const LIGHT_ORBIT_SPEED = 0.5;
 const TEXT_MOVEMENT_SPEED = 0.3;
 const TEXT_MOVEMENT_AMPLITUDE = 0.05;
 const ENV_MAP_UPDATE_INTERVAL = 30;
+const LIGHT_UPDATE_INTERVAL = 2; // Update lights every 2 frames for better performance
+
+// Add light movement state with target values for smooth interpolation
+const lightState = {
+  phase1: Math.random() * Math.PI * 2,
+  phase2: Math.random() * Math.PI * 2,
+  radius1: 2,
+  radius2: 2,
+  height1: 0,
+  height2: 0,
+  speed1: 0.5,
+  speed2: 0.5,
+  // Target values for smooth interpolation
+  targetRadius1: 2,
+  targetRadius2: 2,
+  targetHeight1: 0,
+  targetHeight2: 0,
+  targetSpeed1: 0.5,
+  targetSpeed2: 0.5,
+};
 
 // Optimize text wrapping function
 function wrapText(text: string, maxCharsPerLine: number): string[] {
@@ -428,6 +448,22 @@ export default function OverlayCube({
     const envCamera = new THREE.CubeCamera(0.1, 10, cubeRenderTarget);
     scene.environment = cubeRenderTarget.texture;
 
+    // Add moving lights for shimmer effect
+    const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
+    movingLight1.position.set(2, 0, 2);
+    scene.add(movingLight1);
+    movingLight1Ref.current = movingLight1;
+
+    const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
+    movingLight2.position.set(-2, 0, 2);
+    scene.add(movingLight2);
+    movingLight2Ref.current = movingLight2;
+
+    // Subtle rim light
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    rimLight.position.set(0, 0, -1);
+    scene.add(rimLight);
+
     // Animation
     let time = 0;
     function animate(currentTime: number) {
@@ -441,13 +477,47 @@ export default function OverlayCube({
 
       // Optimize light movement calculations
       if (movingLight1Ref.current && movingLight2Ref.current) {
-        const sinTime = Math.sin(time * LIGHT_ORBIT_SPEED);
-        const cosTime = Math.cos(time * LIGHT_ORBIT_SPEED);
-        const sinTimePI = Math.sin(time * LIGHT_ORBIT_SPEED + Math.PI);
-        const cosTimePI = Math.cos(time * LIGHT_ORBIT_SPEED + Math.PI);
+        // Update phases with different speeds
+        lightState.phase1 += lightState.speed1 * ANIMATION_SPEED;
+        lightState.phase2 += lightState.speed2 * ANIMATION_SPEED;
 
-        movingLight1Ref.current.position.set(sinTime * 2, 0, cosTime * 2);
-        movingLight2Ref.current.position.set(sinTimePI * 2, 0, cosTimePI * 2);
+        // Smoothly interpolate current values towards targets
+        lightState.radius1 +=
+          (lightState.targetRadius1 - lightState.radius1) * 0.02;
+        lightState.radius2 +=
+          (lightState.targetRadius2 - lightState.radius2) * 0.02;
+        lightState.height1 +=
+          (lightState.targetHeight1 - lightState.height1) * 0.02;
+        lightState.height2 +=
+          (lightState.targetHeight2 - lightState.height2) * 0.02;
+        lightState.speed1 +=
+          (lightState.targetSpeed1 - lightState.speed1) * 0.02;
+        lightState.speed2 +=
+          (lightState.targetSpeed2 - lightState.speed2) * 0.02;
+
+        // Randomly set new target values occasionally
+        if (Math.random() < 0.005) {
+          lightState.targetSpeed1 = 0.3 + Math.random() * 0.4;
+          lightState.targetSpeed2 = 0.3 + Math.random() * 0.4;
+        }
+        if (Math.random() < 0.003) {
+          lightState.targetHeight1 = (Math.random() - 0.5) * 0.3;
+          lightState.targetHeight2 = (Math.random() - 0.5) * 0.3;
+        }
+        if (Math.random() < 0.002) {
+          lightState.targetRadius1 = 1.8 + Math.random() * 0.4;
+          lightState.targetRadius2 = 1.8 + Math.random() * 0.4;
+        }
+
+        // Calculate positions with smooth movement
+        const x1 = Math.sin(lightState.phase1) * lightState.radius1;
+        const z1 = Math.cos(lightState.phase1) * lightState.radius1;
+        const x2 = Math.sin(lightState.phase2 + Math.PI) * lightState.radius2;
+        const z2 = Math.cos(lightState.phase2 + Math.PI) * lightState.radius2;
+
+        // Update light positions
+        movingLight1Ref.current.position.set(x1, lightState.height1, z1);
+        movingLight2Ref.current.position.set(x2, lightState.height2, z2);
       }
 
       // Optimize text movement
@@ -628,22 +698,6 @@ export default function OverlayCube({
         mainLight.shadow.mapSize.width = 1024;
         mainLight.shadow.mapSize.height = 1024;
         scene.add(mainLight);
-
-        // Add moving lights for shimmer effect
-        const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
-        movingLight1.position.set(2, 0, 2);
-        scene.add(movingLight1);
-        movingLight1Ref.current = movingLight1;
-
-        const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
-        movingLight2.position.set(-2, 0, 2);
-        scene.add(movingLight2);
-        movingLight2Ref.current = movingLight2;
-
-        // Subtle rim light
-        const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
-        rimLight.position.set(0, 0, -1);
-        scene.add(rimLight);
       };
 
       // Set the update function
