@@ -1,18 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import {
   TextGeometry,
   TextGeometryParameters,
 } from "three/examples/jsm/geometries/TextGeometry.js";
 import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { useThree } from "@react-three/fiber";
+import { useGLTF } from "@react-three/drei";
+import { Message } from "ai";
+
+type SequenceState =
+  | "idle" // Initial state, ready for input
+  | "loading" // Camera moving and/or LLM streaming, cube visible
+  | "text_rendering" // Text is being rendered, cube fading out
+  | "complete"; // Text is rendered, camera drift active
 
 interface ExtendedTextGeometryParameters extends TextGeometryParameters {
   height: number;
 }
 
 interface OverlayCubeProps {
-  messages: { role: string; content: string; id: string }[];
-  isChatLoading: boolean;
+  messages: Message[];
+  sequenceState: SequenceState;
+  lastCompleteContent: string | null;
 }
 
 function cleanText(text: string): string {
@@ -25,57 +36,73 @@ function cleanText(text: string): string {
   return cleanedText;
 }
 
-function wrapText(text: string, maxCharsPerLine: number): string[] {
-  // Clean the text first
-  const cleanedText = cleanText(text);
-  console.log("Wrapping text:", cleanedText);
-  console.log("Max chars per line:", maxCharsPerLine);
+// Pre-create reusable vectors and objects to avoid garbage collection
+const TEMP_VECTOR = new THREE.Vector3();
+const TEMP_VECTOR2 = new THREE.Vector2();
 
-  // Split by actual newlines first to preserve paragraph structure
+// Cache common values
+const FADE_DURATION = 400;
+const ANIMATION_SPEED = 0.01;
+const CUBE_ROTATION_SPEED = { x: 0.5, y: 0.3 };
+const LIGHT_ORBIT_SPEED = 0.5;
+const TEXT_MOVEMENT_SPEED = 0.3;
+const TEXT_MOVEMENT_AMPLITUDE = 0.05;
+const ENV_MAP_UPDATE_INTERVAL = 30;
+const LIGHT_UPDATE_INTERVAL = 2; // Update lights every 2 frames for better performance
+
+// Add light movement state with target values for smooth interpolation
+const lightState = {
+  phase1: Math.random() * Math.PI * 2,
+  phase2: Math.random() * Math.PI * 2,
+  radius1: 2,
+  radius2: 2,
+  height1: 0,
+  height2: 0,
+  speed1: 0.5,
+  speed2: 0.5,
+  // Target values for smooth interpolation
+  targetRadius1: 2,
+  targetRadius2: 2,
+  targetHeight1: 0,
+  targetHeight2: 0,
+  targetSpeed1: 0.5,
+  targetSpeed2: 0.5,
+};
+
+// Optimize text wrapping function
+function wrapText(text: string, maxCharsPerLine: number): string[] {
+  const cleanedText = cleanText(text);
   const paragraphs = cleanedText.split(/\n/);
   const lines: string[] = [];
+  const words = paragraphs
+    .join(" ")
+    .split(" ")
+    .filter((word) => word.length > 0);
 
-  for (const paragraph of paragraphs) {
-    if (paragraph.trim() === "") {
-      // Preserve empty lines
-      lines.push("");
-      continue;
+  let currentLine = "";
+  let currentLineLength = 0;
+
+  for (const word of words) {
+    const effectiveLength = word.length + Math.ceil(word.length * 0.1);
+
+    if (currentLineLength + effectiveLength + 1 <= maxCharsPerLine) {
+      currentLine = currentLine ? `${currentLine} ${word}` : word;
+      currentLineLength += effectiveLength + 1;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+      currentLineLength = effectiveLength;
     }
-
-    const words = paragraph.split(" ").filter((word) => word.length > 0);
-    let currentLine = "";
-    let currentLineLength = 0;
-
-    for (const word of words) {
-      const wordLength = word.length;
-      // Add extra padding to account for character width variations
-      const effectiveLength = wordLength + Math.ceil(wordLength * 0.1);
-
-      if (currentLineLength + effectiveLength + 1 <= maxCharsPerLine) {
-        if (currentLine) {
-          currentLine += " " + word;
-          currentLineLength += effectiveLength + 1;
-        } else {
-          currentLine = word;
-          currentLineLength = effectiveLength;
-        }
-      } else {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-        currentLineLength = effectiveLength;
-      }
-    }
-    if (currentLine) lines.push(currentLine);
   }
+  if (currentLine) lines.push(currentLine);
 
-  console.log("Wrapped lines:", lines);
-  console.log("Number of lines:", lines.length);
   return lines;
 }
 
 export default function OverlayCube({
   messages,
-  isChatLoading,
+  sequenceState,
+  lastCompleteContent,
 }: OverlayCubeProps) {
   const [currentText, setCurrentText] = useState("");
   const [updateTextFn, setUpdateTextFn] = useState<
@@ -95,196 +122,242 @@ export default function OverlayCube({
   const cubeOpacityRef = useRef(0);
   const isTransitioningRef = useRef(false);
   const lastMessageIdRef = useRef<string | null>(null);
+  const lastCompleteMessageRef = useRef<string | null>(null);
   const movingLight1Ref = useRef<THREE.PointLight | null>(null);
   const movingLight2Ref = useRef<THREE.PointLight | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [isFading, setIsFading] = useState(false);
+  const fadeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Handle loading state changes
-  useEffect(() => {
-    console.log("Loading state changed:", isChatLoading);
-    if (isChatLoading) {
-      console.log("Loading started");
-      // When loading starts, fade out current text and show cube
-      if (
-        currentMeshRef.current &&
-        sceneRef.current &&
-        !isTransitioningRef.current
-      ) {
-        console.log("Fading out existing text");
-        isTransitioningRef.current = true;
-        const meshToFadeOut = currentMeshRef.current;
-        const startTime = performance.now();
-        const duration = 400;
+  const fadeOutText = useCallback(() => {
+    if (!currentMeshRef.current || !sceneRef.current) return;
 
-        const fadeOut = () => {
-          const currentTime = performance.now();
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
+    console.log("[OverlayCube] Starting text fade out", {
+      timestamp: new Date().toISOString(),
+    });
 
-          meshToFadeOut.traverse((child) => {
-            if (child instanceof THREE.Mesh) {
-              const material = child.material as THREE.MeshPhysicalMaterial;
-              if (material.opacity !== undefined) {
-                material.opacity = 1 - progress;
-              }
-            }
-          });
+    const meshToFadeOut = currentMeshRef.current;
+    const startTime = performance.now();
 
-          if (progress < 1) {
-            requestAnimationFrame(fadeOut);
-          } else {
-            console.log("Text fade out complete");
-            sceneRef.current?.remove(meshToFadeOut);
-            meshToFadeOut.traverse((child) => {
-              if (child instanceof THREE.Mesh) {
-                child.geometry.dispose();
-                (child.material as THREE.Material).dispose();
-              }
-            });
-            currentMeshRef.current = null;
-            isTransitioningRef.current = false;
+    const animate = () => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(elapsed / FADE_DURATION, 1);
 
-            // Fade in cube after text is gone
-            if (cubeRef.current) {
-              console.log("Fading in cube");
-              const startTime = performance.now();
-              const duration = 400;
+      // Smooth easing
+      const easedProgress =
+        progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
-              const fadeInCube = () => {
-                const currentTime = performance.now();
-                const elapsed = currentTime - startTime;
-                const progress = Math.min(elapsed / duration, 1);
-
-                const material = cubeRef.current!
-                  .material as THREE.MeshPhongMaterial;
-                material.opacity = progress;
-                cubeOpacityRef.current = progress;
-
-                if (progress < 1) {
-                  requestAnimationFrame(fadeInCube);
-                } else {
-                  console.log("Cube fade in complete");
-                }
-              };
-
-              fadeInCube();
-            }
-          }
-        };
-
-        fadeOut();
-      } else if (cubeRef.current) {
-        // If no text to fade out, just show cube
-        console.log("No text to fade out, showing cube");
-        const material = cubeRef.current.material as THREE.MeshPhongMaterial;
-        material.opacity = 1;
-        cubeOpacityRef.current = 1;
-      }
-    } else if (pendingTextRef.current && !isTransitioningRef.current) {
-      // When loading completes, check if we have pending text
-      console.log("Loading complete, checking for pending text");
-      if (cubeRef.current) {
-        console.log("Fading out cube");
-        isTransitioningRef.current = true;
-        const startTime = performance.now();
-        const duration = 400;
-
-        const fadeOutCube = () => {
-          const currentTime = performance.now();
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
-
-          const material = cubeRef.current!.material as THREE.MeshPhongMaterial;
-          material.opacity = 1 - progress;
-          cubeOpacityRef.current = 1 - progress;
-
-          if (progress < 1) {
-            requestAnimationFrame(fadeOutCube);
-          } else {
-            console.log("Cube fade out complete, rendering new text");
-            setCurrentText(pendingTextRef.current!);
-            pendingTextRef.current = null;
-            isTransitioningRef.current = false;
-          }
-        };
-
-        fadeOutCube();
-      }
-    }
-  }, [isChatLoading]);
-
-  // Handle new messages
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      console.log("Message received:", {
-        role: lastMessage.role,
-        isChatLoading,
+      // Update opacity
+      meshToFadeOut.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          const material = child.material as THREE.MeshPhysicalMaterial;
+          material.opacity = 1 - easedProgress;
+        }
       });
 
-      // Store the message when it's from assistant, regardless of loading state
-      if (lastMessage.role === "assistant") {
-        // Only store new messages
-        if (lastMessage.id !== lastMessageIdRef.current) {
-          console.log("New message received, storing for later");
-          lastMessageIdRef.current = lastMessage.id;
-          pendingTextRef.current = lastMessage.content;
-        } else if (lastMessage.id === lastMessageIdRef.current) {
-          // Update the pending text with the latest content
-          console.log("Updating pending text with latest content");
-          pendingTextRef.current = lastMessage.content;
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        console.log("[OverlayCube] Text fade out complete, cleaning up", {
+          timestamp: new Date().toISOString(),
+        });
+        sceneRef.current?.remove(meshToFadeOut);
+        meshToFadeOut.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            (child.material as THREE.Material).dispose();
+          }
+        });
+        currentMeshRef.current = null;
+        isTransitioningRef.current = false;
+      }
+    };
+
+    animate();
+  }, []);
+
+  const fadeOutCube = useCallback(() => {
+    if (!cubeRef.current) return;
+
+    console.log("[OverlayCube] Starting cube fade out", {
+      timestamp: new Date().toISOString(),
+    });
+
+    const startTime = performance.now();
+    const duration = 400;
+
+    const animate = () => {
+      const currentTime = performance.now();
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Smooth easing
+      const easedProgress =
+        progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      if (cubeRef.current) {
+        const material = cubeRef.current.material as THREE.MeshPhongMaterial;
+        material.opacity = 1 - easedProgress;
+        cubeOpacityRef.current = 1 - easedProgress;
+      }
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        console.log("[OverlayCube] Cube fade out complete", {
+          timestamp: new Date().toISOString(),
+        });
+
+        // Start text render after cube is fully faded out
+        if (lastCompleteContent && updateTextFn) {
+          console.log("[OverlayCube] Starting text render after cube fade");
+          updateTextFn(lastCompleteContent);
         }
       }
-    }
-  }, [messages, isChatLoading]);
+    };
 
-  // Listen for camera movement completion
+    animate();
+  }, [lastCompleteContent, updateTextFn]);
+
+  // Handle state changes
   useEffect(() => {
-    const handleCameraMovementComplete = () => {
-      console.log(
-        "Camera movement complete, pending text:",
-        !!pendingTextRef.current
-      );
-      // Only handle camera movement if we're still loading
-      if (isChatLoading) {
-        console.log("Still loading, waiting for completion");
-        return;
-      }
+    console.log("[OverlayCube] State Change:", {
+      sequenceState,
+      hasCompleteContent: !!lastCompleteContent,
+      contentLength: lastCompleteContent?.length,
+      isVisible,
+      isFading,
+      hasCurrentMesh: !!currentMeshRef.current,
+      cubeOpacity: cubeOpacityRef.current,
+      timestamp: new Date().toISOString(),
+    });
 
-      if (
-        pendingTextRef.current &&
-        updateTextFn &&
-        !isTransitioningRef.current
-      ) {
-        console.log("Found pending text, fading out cube");
+    // Clear any existing fade timeout
+    if (fadeTimeoutRef.current) {
+      clearTimeout(fadeTimeoutRef.current);
+      fadeTimeoutRef.current = null;
+    }
+
+    if (sequenceState === "loading") {
+      console.log("[OverlayCube] Loading state - handling transition");
+      setIsVisible(true);
+      setIsFading(false);
+
+      // Always fade out text first if it exists
+      if (currentMeshRef.current) {
+        console.log(
+          "[OverlayCube] Fading out existing text before showing cube"
+        );
         isTransitioningRef.current = true;
-        const startTime = performance.now();
-        const duration = 400;
+        fadeOutText();
 
-        const fadeOutCube = () => {
-          const currentTime = performance.now();
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
-
+        // Show cube after text fade out
+        fadeTimeoutRef.current = setTimeout(() => {
           if (cubeRef.current) {
+            console.log("[OverlayCube] Showing cube after text fade");
             const material = cubeRef.current
               .material as THREE.MeshPhongMaterial;
-            material.opacity = 1 - progress;
-            cubeOpacityRef.current = 1 - progress;
+            material.opacity = 1;
+            cubeOpacityRef.current = 1;
           }
-
-          if (progress < 1) {
-            requestAnimationFrame(fadeOutCube);
-          } else {
-            console.log("Cube fade out complete, rendering new text");
-            setCurrentText(pendingTextRef.current!);
-            pendingTextRef.current = null;
-            isTransitioningRef.current = false;
-          }
-        };
-
-        fadeOutCube();
+        }, FADE_DURATION);
       } else {
-        console.log("No pending text or already transitioning");
+        // Show cube immediately if no text to fade out
+        if (cubeRef.current) {
+          console.log(
+            "[OverlayCube] Showing cube immediately (no text to fade)"
+          );
+          const material = cubeRef.current.material as THREE.MeshPhongMaterial;
+          material.opacity = 1;
+          cubeOpacityRef.current = 1;
+        }
+      }
+    } else if (sequenceState === "text_rendering") {
+      console.log("[OverlayCube] Text rendering state:", {
+        hasCompleteContent: !!lastCompleteContent,
+        contentLength: lastCompleteContent?.length,
+        hasCurrentMesh: !!currentMeshRef.current,
+      });
+
+      // Start fading out cube when text rendering begins
+      if (cubeRef.current) {
+        console.log("[OverlayCube] Starting cube fade out for text rendering");
+        fadeOutCube();
+        setIsFading(true);
+      }
+
+      // Keep text visible during text_rendering state
+      setIsVisible(true);
+    } else if (sequenceState === "complete") {
+      console.log("[OverlayCube] Complete state:", {
+        hasCompleteContent: !!lastCompleteContent,
+        contentLength: lastCompleteContent?.length,
+        hasCurrentMesh: !!currentMeshRef.current,
+      });
+
+      // Ensure cube is faded out in complete state
+      if (cubeRef.current && cubeOpacityRef.current > 0) {
+        console.log(
+          "[OverlayCube] Ensuring cube is faded out in complete state"
+        );
+        fadeOutCube();
+        setIsFading(true);
+      }
+
+      // Keep text visible
+      setIsVisible(true);
+    } else {
+      // idle state
+      console.log("[OverlayCube] Idle state - hiding everything");
+      setIsVisible(false);
+      setIsFading(false);
+    }
+  }, [sequenceState, lastCompleteContent]);
+
+  // Handle camera movement completion
+  useEffect(() => {
+    const handleCameraMovementComplete = () => {
+      console.log("[OverlayCube] Camera Movement Complete:", {
+        hasPendingText: !!pendingTextRef.current,
+        isTransitioning: isTransitioningRef.current,
+        hasUpdateFn: !!updateTextFn,
+        sequenceState,
+        hasCompleteContent: !!lastCompleteContent,
+        contentLength: lastCompleteContent?.length,
+        timestamp: new Date().toISOString(),
+      });
+
+      // If we have complete content, start text render regardless of state
+      if (lastCompleteContent) {
+        console.log("[OverlayCube] Starting text render with content:", {
+          contentLength: lastCompleteContent.length,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Store the content and trigger text render
+        lastCompleteMessageRef.current = lastCompleteContent;
+        pendingTextRef.current = lastCompleteContent;
+
+        // Ensure we have the update function before proceeding
+        if (updateTextFn) {
+          console.log("[OverlayCube] Calling updateTextFn with content");
+          updateTextFn(lastCompleteContent);
+          pendingTextRef.current = null;
+        } else {
+          console.warn(
+            "[OverlayCube] No updateTextFn available for text render"
+          );
+        }
+      } else {
+        console.log("[OverlayCube] Not starting text render:", {
+          sequenceState,
+          hasCompleteContent: !!lastCompleteContent,
+          hasUpdateFn: !!updateTextFn,
+        });
       }
     };
 
@@ -292,12 +365,52 @@ export default function OverlayCube({
       "cameraMovementComplete",
       handleCameraMovementComplete
     );
-    return () =>
+    return () => {
       window.removeEventListener(
         "cameraMovementComplete",
         handleCameraMovementComplete
       );
-  }, [updateTextFn, isChatLoading]);
+    };
+  }, [sequenceState, lastCompleteContent, updateTextFn]);
+
+  // Handle message updates
+  useEffect(() => {
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      console.log("[OverlayCube] Message Update:", {
+        role: lastMessage.role,
+        sequenceState,
+        messageId: lastMessage.id,
+        hasContent: !!lastMessage.content,
+        contentLength: lastMessage.content.length,
+        isTransitioning: isTransitioningRef.current,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Only store the message when it's from assistant and loading is complete
+      if (lastMessage.role === "assistant" && sequenceState === "complete") {
+        // Only store new messages
+        if (lastMessage.id !== lastMessageIdRef.current) {
+          console.log("[OverlayCube] Storing new message");
+          lastMessageIdRef.current = lastMessage.id;
+          pendingTextRef.current = lastMessage.content;
+          lastCompleteMessageRef.current = lastMessage.content;
+          // Don't clean up text in complete state
+          if (sequenceState !== "complete" && currentMeshRef.current) {
+            console.log("[OverlayCube] Cleaning up existing text mesh");
+            sceneRef.current?.remove(currentMeshRef.current);
+            currentMeshRef.current.traverse((child) => {
+              if (child instanceof THREE.Mesh) {
+                child.geometry.dispose();
+                (child.material as THREE.Material).dispose();
+              }
+            });
+            currentMeshRef.current = null;
+          }
+        }
+      }
+    }
+  }, [messages, sequenceState]);
 
   // Update scroll handler
   useEffect(() => {
@@ -335,7 +448,7 @@ export default function OverlayCube({
   // Update 3D text when currentText changes
   useEffect(() => {
     if (updateTextFn && currentText) {
-      console.log("Updating 3D text");
+      console.log("[OverlayCube] Updating 3D text:", currentText);
       updateTextFn(currentText);
     }
   }, [currentText, updateTextFn]);
@@ -431,45 +544,107 @@ export default function OverlayCube({
     const envCamera = new THREE.CubeCamera(0.1, 10, cubeRenderTarget);
     scene.environment = cubeRenderTarget.texture;
 
+    // Add moving lights for shimmer effect
+    const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
+    movingLight1.position.set(2, 0, 2);
+    scene.add(movingLight1);
+    movingLight1Ref.current = movingLight1;
+
+    const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
+    movingLight2.position.set(-2, 0, 2);
+    scene.add(movingLight2);
+    movingLight2Ref.current = movingLight2;
+
+    // Subtle rim light
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    rimLight.position.set(0, 0, -1);
+    scene.add(rimLight);
+
+    // Animation
     let time = 0;
     function animate(currentTime: number) {
-      time += 0.01;
+      time += ANIMATION_SPEED;
 
-      // Animate the cube
+      // Batch matrix updates
       if (cubeRef.current) {
-        cubeRef.current.rotation.x = time * 0.5;
-        cubeRef.current.rotation.y = time * 0.3;
+        cubeRef.current.rotation.x = time * CUBE_ROTATION_SPEED.x;
+        cubeRef.current.rotation.y = time * CUBE_ROTATION_SPEED.y;
       }
 
-      // Animate moving lights
+      // Optimize light movement calculations
       if (movingLight1Ref.current && movingLight2Ref.current) {
-        movingLight1Ref.current.position.x = Math.sin(time * 0.5) * 2;
-        movingLight1Ref.current.position.z = Math.cos(time * 0.5) * 2;
-        movingLight2Ref.current.position.x = Math.sin(time * 0.5 + Math.PI) * 2;
-        movingLight2Ref.current.position.z = Math.cos(time * 0.5 + Math.PI) * 2;
+        // Update phases with different speeds
+        lightState.phase1 += lightState.speed1 * ANIMATION_SPEED;
+        lightState.phase2 += lightState.speed2 * ANIMATION_SPEED;
+
+        // Smoothly interpolate current values towards targets
+        lightState.radius1 +=
+          (lightState.targetRadius1 - lightState.radius1) * 0.02;
+        lightState.radius2 +=
+          (lightState.targetRadius2 - lightState.radius2) * 0.02;
+        lightState.height1 +=
+          (lightState.targetHeight1 - lightState.height1) * 0.02;
+        lightState.height2 +=
+          (lightState.targetHeight2 - lightState.height2) * 0.02;
+        lightState.speed1 +=
+          (lightState.targetSpeed1 - lightState.speed1) * 0.02;
+        lightState.speed2 +=
+          (lightState.targetSpeed2 - lightState.speed2) * 0.02;
+
+        // Randomly set new target values occasionally
+        if (Math.random() < 0.005) {
+          lightState.targetSpeed1 = 0.3 + Math.random() * 0.4;
+          lightState.targetSpeed2 = 0.3 + Math.random() * 0.4;
+        }
+        if (Math.random() < 0.003) {
+          lightState.targetHeight1 = (Math.random() - 0.5) * 0.3;
+          lightState.targetHeight2 = (Math.random() - 0.5) * 0.3;
+        }
+        if (Math.random() < 0.002) {
+          lightState.targetRadius1 = 1.8 + Math.random() * 0.4;
+          lightState.targetRadius2 = 1.8 + Math.random() * 0.4;
+        }
+
+        // Calculate positions with smooth movement
+        const x1 = Math.sin(lightState.phase1) * lightState.radius1;
+        const z1 = Math.cos(lightState.phase1) * lightState.radius1;
+        const x2 = Math.sin(lightState.phase2 + Math.PI) * lightState.radius2;
+        const z2 = Math.cos(lightState.phase2 + Math.PI) * lightState.radius2;
+
+        // Update light positions
+        movingLight1Ref.current.position.set(x1, lightState.height1, z1);
+        movingLight2Ref.current.position.set(x2, lightState.height2, z2);
       }
 
-      // Animate text group if it exists
+      // Optimize text movement
       if (textGroupRef.current) {
-        // Subtle z-axis movement
-        textGroupRef.current.position.z = Math.sin(time * 0.3) * 0.05;
+        textGroupRef.current.position.z =
+          Math.sin(time * TEXT_MOVEMENT_SPEED) * TEXT_MOVEMENT_AMPLITUDE;
       }
 
-      // Process text animations if any
-      animationsRef.current = animationsRef.current.filter((anim) =>
-        anim(currentTime)
-      );
+      // Process text animations
+      if (animationsRef.current.length > 0) {
+        console.log("Processing animations:", animationsRef.current.length);
+        const remainingAnimations = [];
+        for (const anim of animationsRef.current) {
+          const result = anim(currentTime);
+          if (result) {
+            remainingAnimations.push(anim);
+          }
+        }
+        animationsRef.current = remainingAnimations;
+      }
 
-      // Update environment map periodically
-      if (Math.floor(time * 10) % 30 === 0) {
+      // Update environment map less frequently
+      if (Math.floor(time * 10) % ENV_MAP_UPDATE_INTERVAL === 0) {
         envCamera.update(renderer, scene);
       }
 
-      // Render both scenes
+      // Optimize rendering
       renderer.autoClear = false;
       renderer.clear();
       renderer.render(scene, camera);
-      // Only render cube scene if cube is visible
+
       if (cubeOpacityRef.current > 0) {
         renderer.render(cubeScene, cubeCamera);
       }
@@ -480,17 +655,22 @@ export default function OverlayCube({
     // Start animation loop
     animate(performance.now());
 
-    // Update resize handler
+    // Optimize resize handler with debounce
+    let resizeTimeout: NodeJS.Timeout;
     function handleResize() {
-      const newDivHeight = window.innerHeight * 0.6;
-      const newDivWidth = Math.min(window.innerWidth * 0.8, 700);
-      const newAspect = newDivWidth / newDivHeight;
+      if (resizeTimeout) clearTimeout(resizeTimeout);
 
-      camera.aspect = newAspect;
-      camera.updateProjectionMatrix();
-      cubeCamera.aspect = newAspect;
-      cubeCamera.updateProjectionMatrix();
-      renderer.setSize(newDivWidth, newDivHeight);
+      resizeTimeout = setTimeout(() => {
+        const newDivHeight = window.innerHeight * 0.6;
+        const newDivWidth = Math.min(window.innerWidth * 0.8, 700);
+        const newAspect = newDivWidth / newDivHeight;
+
+        camera.aspect = newAspect;
+        camera.updateProjectionMatrix();
+        cubeCamera.aspect = newAspect;
+        cubeCamera.updateProjectionMatrix();
+        renderer.setSize(newDivWidth, newDivHeight);
+      }, 250);
     }
     window.addEventListener("resize", handleResize);
 
@@ -507,11 +687,16 @@ export default function OverlayCube({
       const lineSpacing = 1.6;
       const leftMargin = -1.3;
 
-      // Create update function
+      // Optimize text update function
       const updateText = (text: string) => {
-        console.log("Starting text update");
-        // Remove old mesh immediately
+        console.log("[OverlayCube] updateText called with:", {
+          textLength: text.length,
+          hasCurrentMesh: !!currentMeshRef.current,
+          timestamp: new Date().toISOString(),
+        });
+
         if (currentMesh) {
+          console.log("[OverlayCube] Removing existing text mesh");
           scene.remove(currentMesh);
           currentMesh.traverse((child) => {
             if (child instanceof THREE.Mesh) {
@@ -523,6 +708,13 @@ export default function OverlayCube({
           });
         }
 
+        // Clear existing lights
+        scene.children.forEach((child) => {
+          if (child instanceof THREE.Light) {
+            scene.remove(child);
+          }
+        });
+
         const group = new THREE.Group();
         textGroupRef.current = group;
         scene.add(group);
@@ -531,29 +723,25 @@ export default function OverlayCube({
         const totalHeight = lines.length * fontSize * lineSpacing;
         maxScrollRef.current = totalHeight;
 
-        // Create shared material for all text
+        // Create shared material with consistent properties
         const sharedMaterial = new THREE.MeshPhysicalMaterial({
-          color: 0x00ffff,
-          metalness: 0.2,
-          roughness: 0.1,
-          reflectivity: 0.5,
-          clearcoat: 0.5,
+          color: 0xffffff,
+          metalness: 0.8,
+          roughness: 0.2,
+          reflectivity: 1.0,
+          clearcoat: 1.0,
           clearcoatRoughness: 0.1,
           flatShading: true,
-          envMapIntensity: 0.5,
+          envMapIntensity: 1.5,
           transparent: true,
           opacity: 0,
-          alphaTest: 0,
           depthWrite: false,
-          blending: THREE.NormalBlending,
-          emissive: 0x00ffff,
-          emissiveIntensity: 0.2,
         });
 
-        // Create meshes array to track loading
-        const meshPromises = lines.map((line, i) => {
-          return new Promise<void>((resolve) => {
-            const geometry = new TextGeometry(line, {
+        // Batch geometry creation
+        const geometries = lines.map(
+          (line) =>
+            new TextGeometry(line, {
               font: font,
               size: fontSize,
               height: 0.012,
@@ -562,55 +750,83 @@ export default function OverlayCube({
               bevelThickness: 0.004,
               bevelSize: 0.003,
               bevelSegments: 2,
-            } as ExtendedTextGeometryParameters);
+            } as ExtendedTextGeometryParameters)
+        );
 
-            const textMesh = new THREE.Mesh(geometry, sharedMaterial.clone());
-            textMesh.material.opacity = 0;
-            const lineY = -i * fontSize * lineSpacing;
-            textMesh.position.set(leftMargin, lineY, 0);
-            textMesh.castShadow = true;
-            textMesh.receiveShadow = true;
-            group.add(textMesh);
-
-            setTimeout(resolve, 0);
-          });
+        // Create meshes in a single batch
+        geometries.forEach((geometry, i) => {
+          const textMesh = new THREE.Mesh(geometry, sharedMaterial.clone());
+          textMesh.position.set(leftMargin, -i * fontSize * lineSpacing, 0);
+          textMesh.castShadow = true;
+          textMesh.receiveShadow = true;
+          group.add(textMesh);
         });
 
-        // Wait for all meshes to be created and added
-        Promise.all(meshPromises).then(() => {
-          console.log("All text meshes created, starting fade in");
-          currentMesh = group;
-          currentMeshRef.current = group;
-          group.position.set(0, 1.0, 0);
-          scrollPositionRef.current = 1.0;
-          scene.add(group);
+        currentMesh = group;
+        currentMeshRef.current = group;
+        group.position.set(0, 1.0, 0);
+        scrollPositionRef.current = 1.0;
+        scene.add(group);
 
-          // Start fade animation after everything is loaded
-          const startTime = performance.now();
-          const fadeInDuration = 700;
-          const fadeProgress = { value: 0 };
+        // Add consistent lighting setup
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
 
-          const updateFade = (currentTime: number) => {
-            const elapsed = currentTime - startTime;
-            fadeProgress.value = Math.min(elapsed / fadeInDuration, 1);
+        const mainLight = new THREE.DirectionalLight(0xffffff, 3);
+        mainLight.position.set(2, 2, 1);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.width = 1024;
+        mainLight.shadow.mapSize.height = 1024;
+        scene.add(mainLight);
 
-            group.traverse((child) => {
-              if (child instanceof THREE.Mesh) {
-                const material = child.material as THREE.MeshPhysicalMaterial;
-                material.opacity = fadeProgress.value;
-                material.needsUpdate = true;
-              }
-            });
+        // Add moving lights for shimmer effect
+        const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
+        movingLight1.position.set(2, 0, 2);
+        scene.add(movingLight1);
+        movingLight1Ref.current = movingLight1;
 
-            if (fadeProgress.value >= 1) {
-              console.log("Text fade in complete");
-              window.dispatchEvent(new CustomEvent("textRenderComplete"));
+        const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
+        movingLight2.position.set(-2, 0, 2);
+        scene.add(movingLight2);
+        movingLight2Ref.current = movingLight2;
+
+        // Simple fade in animation
+        const startTime = performance.now();
+        const fadeIn = () => {
+          const elapsed = performance.now() - startTime;
+          const progress = Math.min(elapsed / FADE_DURATION, 1);
+
+          // Smooth easing
+          const easedProgress =
+            progress < 0.5
+              ? 4 * progress * progress * progress
+              : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+          // Update opacity
+          group.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              const material = child.material as THREE.MeshPhysicalMaterial;
+              material.opacity = easedProgress;
             }
-            return fadeProgress.value < 1;
-          };
+          });
 
-          animationsRef.current.push(updateFade);
-        });
+          if (progress < 1) {
+            requestAnimationFrame(fadeIn);
+          } else {
+            console.log(
+              "[OverlayCube] Text fade in complete, dispatching event",
+              {
+                timestamp: new Date().toISOString(),
+                textLength: text.length,
+                groupPosition: group.position.toArray(),
+              }
+            );
+            window.dispatchEvent(new CustomEvent("textRenderComplete"));
+          }
+        };
+
+        // Start fade in
+        requestAnimationFrame(fadeIn);
       };
 
       // Set the update function
@@ -620,33 +836,6 @@ export default function OverlayCube({
       if (currentText) {
         updateText(currentText);
       }
-
-      // Add original lighting for text
-      const ambientLight = new THREE.AmbientLight(0x00ffff, 0.7);
-      scene.add(ambientLight);
-
-      const mainLight = new THREE.DirectionalLight(0x00ffff, 3);
-      mainLight.position.set(2, 2, 1);
-      mainLight.castShadow = true;
-      mainLight.shadow.mapSize.width = 1024;
-      mainLight.shadow.mapSize.height = 1024;
-      scene.add(mainLight);
-
-      // Add moving lights for shimmer effect
-      const movingLight1 = new THREE.PointLight(0x00ffff, 1.2, 10);
-      movingLight1.position.set(2, 0, 2);
-      scene.add(movingLight1);
-      movingLight1Ref.current = movingLight1;
-
-      const movingLight2 = new THREE.PointLight(0x00ffff, 1.2, 10);
-      movingLight2.position.set(-2, 0, 2);
-      scene.add(movingLight2);
-      movingLight2Ref.current = movingLight2;
-
-      // Subtle rim light
-      const rimLight = new THREE.DirectionalLight(0x00ffff, 0.9);
-      rimLight.position.set(0, 0, -1);
-      scene.add(rimLight);
     });
 
     // Cleanup
@@ -669,5 +858,26 @@ export default function OverlayCube({
     };
   }, []); // Empty dependency array - only run once on mount
 
-  return null;
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (fadeTimeoutRef.current) {
+        clearTimeout(fadeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  if (!isVisible) {
+    return null;
+  }
+
+  return (
+    <div
+      className={`fixed inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-500 ${
+        isFading ? "opacity-0" : "opacity-100"
+      }`}
+    >
+      <div className="w-16 h-16 border-4 border-blue-500 rounded-lg animate-spin" />
+    </div>
+  );
 }
