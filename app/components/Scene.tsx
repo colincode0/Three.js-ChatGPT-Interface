@@ -261,19 +261,16 @@ function Scene({ chatProps }: SceneProps) {
         return;
 
       try {
-        console.log("[Scene] Form submitted, starting sequence");
+        const now = Date.now();
+        console.log("[Scene] Form submitted, starting sequence", {
+          timestamp: new Date().toISOString(),
+          currentPosition: cameraRef.current.position.toArray(),
+          isAnimating: isAnimatingRef.current,
+          isChatLoading,
+        });
         setCanInput(false);
-        await handleChatSubmit(e);
-        setInput(""); // Clear input after submit
-        // Reset textarea height
-        if (inputRef.current) {
-          inputRef.current.style.height = "auto";
-          inputRef.current.focus();
-        }
-        setHasInteracted(true);
 
-        // Handle camera movement
-        console.log("[Scene] Starting camera movement");
+        // Start camera movement immediately
         startPositionRef.current.copy(cameraRef.current.position);
         getRandomPosition(cameraRef.current.position, tempVector.current);
         targetPositionRef.current.copy(tempVector.current);
@@ -286,9 +283,25 @@ function Scene({ chatProps }: SceneProps) {
         isAnimatingRef.current = true;
         isTransitioningRef.current = true;
 
-        // Wait for camera movement to complete before enabling text rendering
+        // Start camera movement before submitting chat
+        await handleChatSubmit(e);
+        setInput(""); // Clear input after submit
+        // Reset textarea height
+        if (inputRef.current) {
+          inputRef.current.style.height = "auto";
+          inputRef.current.focus();
+        }
+        setHasInteracted(true);
+
+        // Wait for camera movement to complete
         const handleCameraMovementComplete = () => {
-          console.log("[Scene] Camera movement complete event received");
+          const completeTime = Date.now();
+          console.log("[Scene] Camera movement complete event received", {
+            timestamp: new Date().toISOString(),
+            timeSinceSubmit: `${completeTime - now}ms`,
+            finalPosition: cameraRef.current?.position.toArray(),
+            animationProgress: animationProgressRef.current,
+          });
           window.removeEventListener(
             "cameraMovementComplete",
             handleCameraMovementComplete
@@ -299,7 +312,10 @@ function Scene({ chatProps }: SceneProps) {
           handleCameraMovementComplete
         );
       } catch (error) {
-        console.error("[Scene] Error submitting form:", error);
+        console.error("[Scene] Error submitting form:", {
+          error,
+          timestamp: new Date().toISOString(),
+        });
         setCanInput(true); // Re-enable input on error
       }
     },
@@ -522,8 +538,14 @@ function Scene({ chatProps }: SceneProps) {
           // Ensure camera is exactly at target position
           cameraRef.current.position.copy(targetPositionRef.current);
           // Always dispatch camera movement complete when animation is done
+          const now = Date.now();
           console.log(
-            "[Scene] Camera movement truly complete, dispatching event"
+            "[Scene] Camera movement truly complete, dispatching event",
+            {
+              finalPosition: cameraRef.current.position.toArray(),
+              timestamp: new Date().toISOString(),
+              animationDuration: `${now - driftStartTimeRef.current}ms`,
+            }
           );
           window.dispatchEvent(new CustomEvent("cameraMovementComplete"));
         }
