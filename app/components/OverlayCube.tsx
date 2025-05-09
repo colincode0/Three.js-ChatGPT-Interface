@@ -12,10 +12,9 @@ import { Message } from "ai";
 
 type SequenceState =
   | "idle" // Initial state, ready for input
-  | "streaming" // LLM is streaming response
-  | "camera_moving" // Camera is moving to new position
-  | "text_rendering" // Text is being rendered
-  | "complete"; // Everything is done
+  | "loading" // Camera moving and/or LLM streaming, cube visible
+  | "text_rendering" // Text is being rendered, cube fading out
+  | "complete"; // Text is rendered, camera drift active
 
 interface ExtendedTextGeometryParameters extends TextGeometryParameters {
   height: number;
@@ -212,11 +211,17 @@ export default function OverlayCube({
         console.log("[OverlayCube] Cube fade out complete", {
           timestamp: new Date().toISOString(),
         });
+
+        // Start text render after cube is fully faded out
+        if (lastCompleteContent && updateTextFn) {
+          console.log("[OverlayCube] Starting text render after cube fade");
+          updateTextFn(lastCompleteContent);
+        }
       }
     };
 
     animate();
-  }, []);
+  }, [lastCompleteContent, updateTextFn]);
 
   // Handle state changes
   useEffect(() => {
@@ -238,21 +243,35 @@ export default function OverlayCube({
       fadeTimeoutRef.current = null;
     }
 
-    // Show cube during streaming and camera movement
-    if (sequenceState === "streaming" || sequenceState === "camera_moving") {
-      console.log("[OverlayCube] Showing cube for state:", sequenceState);
+    if (sequenceState === "loading") {
+      console.log("[OverlayCube] Loading state - handling transition");
       setIsVisible(true);
       setIsFading(false);
 
-      // Fade out existing text if any
+      // Always fade out text first if it exists
       if (currentMeshRef.current) {
-        console.log("[OverlayCube] Fading out existing text");
+        console.log(
+          "[OverlayCube] Fading out existing text before showing cube"
+        );
         isTransitioningRef.current = true;
         fadeOutText();
+
+        // Show cube after text fade out
+        fadeTimeoutRef.current = setTimeout(() => {
+          if (cubeRef.current) {
+            console.log("[OverlayCube] Showing cube after text fade");
+            const material = cubeRef.current
+              .material as THREE.MeshPhongMaterial;
+            material.opacity = 1;
+            cubeOpacityRef.current = 1;
+          }
+        }, FADE_DURATION);
       } else {
         // Show cube immediately if no text to fade out
         if (cubeRef.current) {
-          console.log("[OverlayCube] Showing cube immediately");
+          console.log(
+            "[OverlayCube] Showing cube immediately (no text to fade)"
+          );
           const material = cubeRef.current.material as THREE.MeshPhongMaterial;
           material.opacity = 1;
           cubeOpacityRef.current = 1;
@@ -270,12 +289,6 @@ export default function OverlayCube({
         console.log("[OverlayCube] Starting cube fade out for text rendering");
         fadeOutCube();
         setIsFading(true);
-      }
-
-      // If we have content but no mesh, start text render
-      if (lastCompleteContent && !currentMeshRef.current && updateTextFn) {
-        console.log("[OverlayCube] Starting text render from state change");
-        updateTextFn(lastCompleteContent);
       }
 
       // Keep text visible during text_rendering state
@@ -299,9 +312,12 @@ export default function OverlayCube({
       // Keep text visible
       setIsVisible(true);
     } else {
-      console.log("[OverlayCube] No action needed for state:", sequenceState);
+      // idle state
+      console.log("[OverlayCube] Idle state - hiding everything");
+      setIsVisible(false);
+      setIsFading(false);
     }
-  }, [sequenceState, lastCompleteContent, updateTextFn]);
+  }, [sequenceState, lastCompleteContent]);
 
   // Handle camera movement completion
   useEffect(() => {
@@ -701,7 +717,7 @@ export default function OverlayCube({
         const totalHeight = lines.length * fontSize * lineSpacing;
         maxScrollRef.current = totalHeight;
 
-        // Create shared material once
+        // Create shared material with original lighting properties
         const sharedMaterial = new THREE.MeshPhysicalMaterial({
           color: 0xffffff,
           metalness: 0.8,

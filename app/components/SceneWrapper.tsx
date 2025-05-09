@@ -8,10 +8,9 @@ import { useEffect, useState, useCallback, useRef } from "react";
 // Define the possible states of our sequence
 type SequenceState =
   | "idle" // Initial state, ready for input
-  | "streaming" // LLM is streaming response
-  | "camera_moving" // Camera is moving to new position
-  | "text_rendering" // Text is being rendered
-  | "complete"; // Everything is done
+  | "loading" // Camera moving and/or LLM streaming, cube visible
+  | "text_rendering" // Text is being rendered, cube fading out
+  | "complete"; // Text is rendered, camera drift active
 
 export default function SceneWrapper() {
   const [sequenceState, setSequenceState] = useState<SequenceState>("idle");
@@ -82,7 +81,7 @@ export default function SceneWrapper() {
       });
 
       // Reset states when new response starts
-      setSequenceState("streaming");
+      setSequenceState("loading");
       setLastCompleteContent(null);
       lastStateChangeTimeRef.current = now;
     },
@@ -223,7 +222,7 @@ export default function SceneWrapper() {
         timestamp: new Date().toISOString(),
       });
       try {
-        setSequenceState("streaming");
+        setSequenceState("loading");
         lastStateChangeTimeRef.current = now;
         await handleSubmit(e);
       } catch (error) {
