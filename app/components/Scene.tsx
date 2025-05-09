@@ -17,7 +17,6 @@ import { UseChatHelpers } from "ai/react";
 const HALF_PI = Math.PI / 2;
 const TEMP_VECTOR2 = new THREE.Vector2();
 const TEMP_SPHERICAL = new THREE.Spherical();
-const TEMP_VECTOR3 = new THREE.Vector3();
 
 // Cache common values
 const MAX_ANGLE_CHANGE = HALF_PI / 2;
@@ -26,7 +25,6 @@ const MIN_RADIUS = 1;
 const MAX_RADIUS = 2;
 const MIN_PHI = Math.PI / 6;
 const MAX_PHI = (5 * Math.PI) / 6;
-const DRIFT_SPEED = 0.0002;
 const MAX_DRIFT_SPEED = 0.0005;
 const ANIMATION_SPEED = 0.003;
 const RESIZE_DEBOUNCE = 250;
