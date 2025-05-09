@@ -708,6 +708,13 @@ export default function OverlayCube({
           });
         }
 
+        // Clear existing lights
+        scene.children.forEach((child) => {
+          if (child instanceof THREE.Light) {
+            scene.remove(child);
+          }
+        });
+
         const group = new THREE.Group();
         textGroupRef.current = group;
         scene.add(group);
@@ -716,7 +723,7 @@ export default function OverlayCube({
         const totalHeight = lines.length * fontSize * lineSpacing;
         maxScrollRef.current = totalHeight;
 
-        // Create shared material with original lighting properties
+        // Create shared material with consistent properties
         const sharedMaterial = new THREE.MeshPhysicalMaterial({
           color: 0xffffff,
           metalness: 0.8,
@@ -761,6 +768,28 @@ export default function OverlayCube({
         scrollPositionRef.current = 1.0;
         scene.add(group);
 
+        // Add consistent lighting setup
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const mainLight = new THREE.DirectionalLight(0xffffff, 3);
+        mainLight.position.set(2, 2, 1);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.width = 1024;
+        mainLight.shadow.mapSize.height = 1024;
+        scene.add(mainLight);
+
+        // Add moving lights for shimmer effect
+        const movingLight1 = new THREE.PointLight(0xffffff, 1.2, 10);
+        movingLight1.position.set(2, 0, 2);
+        scene.add(movingLight1);
+        movingLight1Ref.current = movingLight1;
+
+        const movingLight2 = new THREE.PointLight(0xffffff, 1.2, 10);
+        movingLight2.position.set(-2, 0, 2);
+        scene.add(movingLight2);
+        movingLight2Ref.current = movingLight2;
+
         // Simple fade in animation
         const startTime = performance.now();
         const fadeIn = () => {
@@ -798,17 +827,6 @@ export default function OverlayCube({
 
         // Start fade in
         requestAnimationFrame(fadeIn);
-
-        // Add original lighting for text
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-        scene.add(ambientLight);
-
-        const mainLight = new THREE.DirectionalLight(0xffffff, 3);
-        mainLight.position.set(2, 2, 1);
-        mainLight.castShadow = true;
-        mainLight.shadow.mapSize.width = 1024;
-        mainLight.shadow.mapSize.height = 1024;
-        scene.add(mainLight);
       };
 
       // Set the update function
