@@ -272,6 +272,12 @@ export default function OverlayCube({
         setIsFading(true);
       }
 
+      // If we have content but no mesh, start text render
+      if (lastCompleteContent && !currentMeshRef.current && updateTextFn) {
+        console.log("[OverlayCube] Starting text render from state change");
+        updateTextFn(lastCompleteContent);
+      }
+
       // Keep text visible during text_rendering state
       setIsVisible(true);
     } else if (sequenceState === "complete") {
@@ -295,7 +301,7 @@ export default function OverlayCube({
     } else {
       console.log("[OverlayCube] No action needed for state:", sequenceState);
     }
-  }, [sequenceState, lastCompleteContent]);
+  }, [sequenceState, lastCompleteContent, updateTextFn]);
 
   // Handle camera movement completion
   useEffect(() => {
@@ -310,14 +316,32 @@ export default function OverlayCube({
         timestamp: new Date().toISOString(),
       });
 
-      if (sequenceState === "camera_moving" && lastCompleteContent) {
-        console.log("[OverlayCube] Starting text render");
-        updateTextFn?.(lastCompleteContent);
-        pendingTextRef.current = null;
+      // If we have complete content, start text render regardless of state
+      if (lastCompleteContent) {
+        console.log("[OverlayCube] Starting text render with content:", {
+          contentLength: lastCompleteContent.length,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Store the content and trigger text render
+        lastCompleteMessageRef.current = lastCompleteContent;
+        pendingTextRef.current = lastCompleteContent;
+
+        // Ensure we have the update function before proceeding
+        if (updateTextFn) {
+          console.log("[OverlayCube] Calling updateTextFn with content");
+          updateTextFn(lastCompleteContent);
+          pendingTextRef.current = null;
+        } else {
+          console.warn(
+            "[OverlayCube] No updateTextFn available for text render"
+          );
+        }
       } else {
-        console.warn("[OverlayCube] Unexpected state during camera complete:", {
+        console.log("[OverlayCube] Not starting text render:", {
           sequenceState,
           hasCompleteContent: !!lastCompleteContent,
+          hasUpdateFn: !!updateTextFn,
         });
       }
     };
@@ -356,8 +380,8 @@ export default function OverlayCube({
           lastMessageIdRef.current = lastMessage.id;
           pendingTextRef.current = lastMessage.content;
           lastCompleteMessageRef.current = lastMessage.content;
-          // Don't render text yet - wait for camera movement complete event
-          if (currentMeshRef.current) {
+          // Don't clean up text in complete state
+          if (sequenceState !== "complete" && currentMeshRef.current) {
             console.log("[OverlayCube] Cleaning up existing text mesh");
             sceneRef.current?.remove(currentMeshRef.current);
             currentMeshRef.current.traverse((child) => {
@@ -650,7 +674,14 @@ export default function OverlayCube({
 
       // Optimize text update function
       const updateText = (text: string) => {
+        console.log("[OverlayCube] updateText called with:", {
+          textLength: text.length,
+          hasCurrentMesh: !!currentMeshRef.current,
+          timestamp: new Date().toISOString(),
+        });
+
         if (currentMesh) {
+          console.log("[OverlayCube] Removing existing text mesh");
           scene.remove(currentMesh);
           currentMesh.traverse((child) => {
             if (child instanceof THREE.Mesh) {
