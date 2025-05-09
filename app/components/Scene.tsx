@@ -137,6 +137,7 @@ function Scene({ chatProps }: SceneProps) {
   // Animation state
   const animationProgressRef = useRef(0);
   const isAnimatingRef = useRef(false);
+  const isTransitioningRef = useRef(false);
 
   const chatBoxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -260,7 +261,7 @@ function Scene({ chatProps }: SceneProps) {
         return;
 
       try {
-        console.log("Form submitted, disabling input");
+        console.log("[Scene] Form submitted, starting sequence");
         setCanInput(false);
         await handleChatSubmit(e);
         setInput(""); // Clear input after submit
@@ -272,6 +273,7 @@ function Scene({ chatProps }: SceneProps) {
         setHasInteracted(true);
 
         // Handle camera movement
+        console.log("[Scene] Starting camera movement");
         startPositionRef.current.copy(cameraRef.current.position);
         getRandomPosition(cameraRef.current.position, tempVector.current);
         targetPositionRef.current.copy(tempVector.current);
@@ -282,8 +284,22 @@ function Scene({ chatProps }: SceneProps) {
 
         animationProgressRef.current = 0;
         isAnimatingRef.current = true;
+        isTransitioningRef.current = true;
+
+        // Wait for camera movement to complete before enabling text rendering
+        const handleCameraMovementComplete = () => {
+          console.log("[Scene] Camera movement complete event received");
+          window.removeEventListener(
+            "cameraMovementComplete",
+            handleCameraMovementComplete
+          );
+        };
+        window.addEventListener(
+          "cameraMovementComplete",
+          handleCameraMovementComplete
+        );
       } catch (error) {
-        console.error("Error submitting form:", error);
+        console.error("[Scene] Error submitting form:", error);
         setCanInput(true); // Re-enable input on error
       }
     },
@@ -503,6 +519,12 @@ function Scene({ chatProps }: SceneProps) {
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
           animationProgressRef.current = 1;
+          // Ensure camera is exactly at target position
+          cameraRef.current.position.copy(targetPositionRef.current);
+          // Always dispatch camera movement complete when animation is done
+          console.log(
+            "[Scene] Camera movement truly complete, dispatching event"
+          );
           window.dispatchEvent(new CustomEvent("cameraMovementComplete"));
         }
 

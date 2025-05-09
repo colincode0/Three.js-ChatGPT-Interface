@@ -196,36 +196,10 @@ export default function OverlayCube({
         material.opacity = 1;
         cubeOpacityRef.current = 1;
       }
-    } else if (pendingTextRef.current && !isTransitioningRef.current) {
-      // When loading completes, check if we have pending text
-      console.log("Loading complete, checking for pending text");
-      if (cubeRef.current) {
-        console.log("Fading out cube");
-        isTransitioningRef.current = true;
-        const startTime = performance.now();
-
-        const fadeOutCube = () => {
-          const currentTime = performance.now();
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / FADE_DURATION, 1);
-
-          const material = cubeRef.current!.material as THREE.MeshPhongMaterial;
-          material.opacity = 1 - progress;
-          cubeOpacityRef.current = 1 - progress;
-
-          if (progress < 1) {
-            requestAnimationFrame(fadeOutCube);
-          } else {
-            console.log("Cube fade out complete, rendering new text");
-            // Only set the text after cube is fully faded out
-            setCurrentText(pendingTextRef.current!);
-            pendingTextRef.current = null;
-            isTransitioningRef.current = false;
-          }
-        };
-
-        fadeOutCube();
-      }
+    } else {
+      // When loading completes, just store the text but don't render it yet
+      console.log("Loading complete, waiting for camera movement");
+      // The text will be rendered when camera movement completes
     }
   }, [isChatLoading]);
 
@@ -233,21 +207,38 @@ export default function OverlayCube({
   useEffect(() => {
     if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log("Message received:", {
+      console.log("[OverlayCube] Message received:", {
         role: lastMessage.role,
         isChatLoading,
+        messageId: lastMessage.id,
+        content: lastMessage.content,
+        isTransitioning: isTransitioningRef.current,
       });
 
-      // Store the message when it's from assistant, regardless of loading state
+      // Store the message when it's from assistant
       if (lastMessage.role === "assistant") {
         // Only store new messages
         if (lastMessage.id !== lastMessageIdRef.current) {
-          console.log("New message received, storing for later");
+          console.log("[OverlayCube] New message received, storing for later");
           lastMessageIdRef.current = lastMessage.id;
           pendingTextRef.current = lastMessage.content;
+          // Don't render text yet - wait for camera movement complete event
+          if (currentMeshRef.current) {
+            console.log("[OverlayCube] Removing existing text mesh");
+            sceneRef.current?.remove(currentMeshRef.current);
+            currentMeshRef.current.traverse((child) => {
+              if (child instanceof THREE.Mesh) {
+                child.geometry.dispose();
+                (child.material as THREE.Material).dispose();
+              }
+            });
+            currentMeshRef.current = null;
+          }
         } else if (lastMessage.id === lastMessageIdRef.current) {
           // Update the pending text with the latest content
-          console.log("Updating pending text with latest content");
+          console.log(
+            "[OverlayCube] Updating pending text with latest content"
+          );
           pendingTextRef.current = lastMessage.content;
         }
       }
@@ -257,22 +248,18 @@ export default function OverlayCube({
   // Listen for camera movement completion
   useEffect(() => {
     const handleCameraMovementComplete = () => {
-      console.log(
-        "Camera movement complete, pending text:",
-        !!pendingTextRef.current
-      );
-      // Only handle camera movement if we're still loading
-      if (isChatLoading) {
-        console.log("Still loading, waiting for completion");
-        return;
-      }
+      console.log("[OverlayCube] Camera movement complete event received", {
+        hasPendingText: !!pendingTextRef.current,
+        isTransitioning: isTransitioningRef.current,
+        hasUpdateFn: !!updateTextFn,
+      });
 
       if (
         pendingTextRef.current &&
         updateTextFn &&
         !isTransitioningRef.current
       ) {
-        console.log("Found pending text, fading out cube");
+        console.log("[OverlayCube] Starting text rendering sequence");
         isTransitioningRef.current = true;
         const startTime = performance.now();
         const duration = 400;
@@ -292,16 +279,37 @@ export default function OverlayCube({
           if (progress < 1) {
             requestAnimationFrame(fadeOutCube);
           } else {
-            console.log("Cube fade out complete, rendering new text");
-            setCurrentText(pendingTextRef.current!);
-            pendingTextRef.current = null;
-            isTransitioningRef.current = false;
+            console.log(
+              "[OverlayCube] Cube fade out complete, preparing to render text"
+            );
+            // Add a small delay to ensure camera is truly settled
+            setTimeout(() => {
+              if (pendingTextRef.current) {
+                // Double check we still have text to render
+                console.log(
+                  "[OverlayCube] Rendering text:",
+                  pendingTextRef.current
+                );
+                setCurrentText(pendingTextRef.current);
+                pendingTextRef.current = null;
+                isTransitioningRef.current = false;
+                // Signal to Scene that text rendering is complete
+                console.log(
+                  "[OverlayCube] Dispatching textRenderComplete event"
+                );
+                window.dispatchEvent(new CustomEvent("textRenderComplete"));
+              }
+            }, 100);
           }
         };
 
         fadeOutCube();
       } else {
-        console.log("No pending text or already transitioning");
+        console.log("[OverlayCube] Not starting text render because:", {
+          hasPendingText: !!pendingTextRef.current,
+          isTransitioning: isTransitioningRef.current,
+          hasUpdateFn: !!updateTextFn,
+        });
       }
     };
 
@@ -314,7 +322,7 @@ export default function OverlayCube({
         "cameraMovementComplete",
         handleCameraMovementComplete
       );
-  }, [updateTextFn, isChatLoading]);
+  }, [updateTextFn]);
 
   // Update scroll handler
   useEffect(() => {
@@ -352,7 +360,7 @@ export default function OverlayCube({
   // Update 3D text when currentText changes
   useEffect(() => {
     if (updateTextFn && currentText) {
-      console.log("Updating 3D text");
+      console.log("[OverlayCube] Updating 3D text:", currentText);
       updateTextFn(currentText);
     }
   }, [currentText, updateTextFn]);
