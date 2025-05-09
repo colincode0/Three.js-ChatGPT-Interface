@@ -238,7 +238,6 @@ export default function OverlayCube({
 
     // Clear any existing fade timeout
     if (fadeTimeoutRef.current) {
-      console.log("[OverlayCube] Clearing existing fade timeout");
       clearTimeout(fadeTimeoutRef.current);
       fadeTimeoutRef.current = null;
     }

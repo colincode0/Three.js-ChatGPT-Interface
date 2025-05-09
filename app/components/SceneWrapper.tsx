@@ -18,6 +18,7 @@ export default function SceneWrapper() {
   const [lastCompleteContent, setLastCompleteContent] = useState<string | null>(
     null
   );
+  const [pendingContent, setPendingContent] = useState<string | null>(null);
 
   // Add timing refs
   const llmStartTimeRef = useRef<number | null>(null);
@@ -33,26 +34,17 @@ export default function SceneWrapper() {
   } = useChat({
     onFinish: (message) => {
       const now = Date.now();
-      const llmDuration = llmStartTimeRef.current
-        ? now - llmStartTimeRef.current
-        : null;
-      const cameraDuration = cameraStartTimeRef.current
-        ? now - cameraStartTimeRef.current
-        : null;
-
       console.log("[SceneWrapper] LLM Stream Finished:", {
         messageId: message.id,
         contentLength: message.content.length,
         role: message.role,
         currentState: sequenceState,
-        llmDuration: llmDuration ? `${llmDuration}ms` : "unknown",
-        cameraDuration: cameraDuration ? `${cameraDuration}ms` : "unknown",
-        timeSinceLastStateChange: `${now - lastStateChangeTimeRef.current}ms`,
         cameraMovementComplete: cameraMovementCompleteRef.current,
         timestamp: new Date().toISOString(),
       });
 
-      setLastCompleteContent(message.content);
+      // Store the content but don't render yet
+      setPendingContent(message.content);
       llmCompleteRef.current = true;
 
       // If camera movement is already complete, start text rendering
@@ -60,6 +52,7 @@ export default function SceneWrapper() {
         console.log(
           "[SceneWrapper] Camera movement already complete, starting text render"
         );
+        setLastCompleteContent(message.content);
         setSequenceState("text_rendering");
         lastStateChangeTimeRef.current = now;
       } else {
@@ -76,28 +69,26 @@ export default function SceneWrapper() {
         status: response.status,
         headers: response.headers,
         currentState: sequenceState,
-        timeSinceLastStateChange: `${now - lastStateChangeTimeRef.current}ms`,
         timestamp: new Date().toISOString(),
       });
 
       // Reset states when new response starts
       setSequenceState("loading");
       setLastCompleteContent(null);
+      setPendingContent(null);
       lastStateChangeTimeRef.current = now;
     },
     onError: (error) => {
       console.error("[SceneWrapper] LLM Error:", {
         error,
         currentState: sequenceState,
-        timeSinceLastStateChange: `${
-          Date.now() - lastStateChangeTimeRef.current
-        }ms`,
         timestamp: new Date().toISOString(),
       });
 
       // Reset to idle state on error
       setSequenceState("idle");
       setLastCompleteContent(null);
+      setPendingContent(null);
       llmCompleteRef.current = false;
       cameraMovementCompleteRef.current = false;
       lastStateChangeTimeRef.current = Date.now();
@@ -128,31 +119,19 @@ export default function SceneWrapper() {
   useEffect(() => {
     const handleCameraMovementComplete = () => {
       const now = Date.now();
-      const cameraDuration = cameraStartTimeRef.current
-        ? now - cameraStartTimeRef.current
-        : null;
-      const llmDuration = llmStartTimeRef.current
-        ? now - llmStartTimeRef.current
-        : null;
-
       console.log("[SceneWrapper] Camera Movement Complete:", {
         currentState: sequenceState,
-        hasCompleteContent: !!lastCompleteContent,
-        contentLength: lastCompleteContent?.length,
-        cameraDuration: cameraDuration ? `${cameraDuration}ms` : "unknown",
-        llmDuration: llmDuration ? `${llmDuration}ms` : "unknown",
-        timeSinceLastStateChange: `${now - lastStateChangeTimeRef.current}ms`,
+        hasPendingContent: !!pendingContent,
         llmComplete: llmCompleteRef.current,
         timestamp: new Date().toISOString(),
       });
 
       cameraMovementCompleteRef.current = true;
 
-      // If LLM is already complete, start text rendering
-      if (llmCompleteRef.current && lastCompleteContent) {
-        console.log(
-          "[SceneWrapper] LLM already complete, starting text render"
-        );
+      // If we have pending content, start text rendering
+      if (pendingContent) {
+        console.log("[SceneWrapper] Starting text render with pending content");
+        setLastCompleteContent(pendingContent);
         setSequenceState("text_rendering");
         lastStateChangeTimeRef.current = now;
       } else {
@@ -170,7 +149,7 @@ export default function SceneWrapper() {
         handleCameraMovementComplete
       );
     };
-  }, [sequenceState, lastCompleteContent]);
+  }, [sequenceState, pendingContent]);
 
   // Handle text render completion
   useEffect(() => {
@@ -178,27 +157,13 @@ export default function SceneWrapper() {
       const now = Date.now();
       console.log("[SceneWrapper] Text Render Complete:", {
         currentState: sequenceState,
-        hasCompleteContent: !!lastCompleteContent,
-        contentLength: lastCompleteContent?.length,
-        timeSinceLastStateChange: `${now - lastStateChangeTimeRef.current}ms`,
         timestamp: new Date().toISOString(),
       });
 
-      // Only transition to complete if we're in text_rendering state
       if (sequenceState === "text_rendering") {
-        console.log(
-          "[SceneWrapper] Transitioning to complete state after text render"
-        );
+        console.log("[SceneWrapper] Transitioning to complete state");
         setSequenceState("complete");
         lastStateChangeTimeRef.current = now;
-      } else {
-        console.warn(
-          "[SceneWrapper] Received text render complete in unexpected state:",
-          {
-            currentState: sequenceState,
-            timestamp: new Date().toISOString(),
-          }
-        );
       }
     };
 
@@ -209,7 +174,7 @@ export default function SceneWrapper() {
         handleTextRenderComplete
       );
     };
-  }, [sequenceState, lastCompleteContent]);
+  }, [sequenceState]);
 
   // Handle chat submission
   const handleSubmit = restChatProps.handleSubmit;
@@ -218,7 +183,6 @@ export default function SceneWrapper() {
       const now = Date.now();
       console.log("[SceneWrapper] Form Submitted:", {
         currentState: sequenceState,
-        timeSinceLastStateChange: `${now - lastStateChangeTimeRef.current}ms`,
         timestamp: new Date().toISOString(),
       });
       try {
@@ -229,9 +193,6 @@ export default function SceneWrapper() {
         console.error("[SceneWrapper] Submit Error:", {
           error,
           currentState: sequenceState,
-          timeSinceLastStateChange: `${
-            Date.now() - lastStateChangeTimeRef.current
-          }ms`,
           timestamp: new Date().toISOString(),
         });
         setSequenceState("idle");
@@ -240,21 +201,6 @@ export default function SceneWrapper() {
     },
     [handleSubmit, sequenceState]
   );
-
-  // Debug state changes
-  useEffect(() => {
-    const now = Date.now();
-    console.log("[SceneWrapper] State Changed:", {
-      newState: sequenceState,
-      isChatLoading,
-      hasCompleteContent: !!lastCompleteContent,
-      contentLength: lastCompleteContent?.length,
-      timeSinceLastStateChange: `${now - lastStateChangeTimeRef.current}ms`,
-      llmComplete: llmCompleteRef.current,
-      cameraMovementComplete: cameraMovementCompleteRef.current,
-      timestamp: new Date().toISOString(),
-    });
-  }, [sequenceState, isChatLoading, lastCompleteContent]);
 
   const chatProps = {
     ...restChatProps,
