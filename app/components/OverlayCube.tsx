@@ -40,6 +40,8 @@ const CUBE_ROTATION_SPEED = { x: 0.5, y: 0.3 };
 const TEXT_MOVEMENT_SPEED = 0.3;
 const TEXT_MOVEMENT_AMPLITUDE = 0.05;
 const ENV_MAP_UPDATE_INTERVAL = 30;
+const MORPH_DURATION = 800; // Duration for morphing transition
+const SHAPE_PAUSE_DURATION = 810; // 0.81 second pause at each shape
 
 // Add light movement state with target values for smooth interpolation
 const lightState = {
@@ -509,16 +511,29 @@ export default function OverlayCube({
 
     container.appendChild(renderer.domElement);
 
-    // Setup cube
-    const cubeGeometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+    // Create morphing geometries
+    const rectGeometry = new THREE.BoxGeometry(0.4, 0.2, 0.2);
+
+    // Create a single geometry that will morph
+    const morphGeometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+
+    // Add the rectangle as a morph target
+    const rectPositions = rectGeometry.attributes.position.array;
+    morphGeometry.morphAttributes.position = [];
+    morphGeometry.morphAttributes.position[0] =
+      new THREE.Float32BufferAttribute(rectPositions, 3);
+
+    // Create morphing material
     const cubeMaterial = new THREE.MeshPhongMaterial({
-      color: 0x00ffff,
+      color: 0xffffff,
       shininess: 100,
       specular: 0x444444,
       transparent: true,
       opacity: 0, // Start invisible
     });
-    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+
+    // Create morphing mesh
+    const cube = new THREE.Mesh(morphGeometry, cubeMaterial);
     cube.position.set(0, 0.2, 0);
     cubeScene.add(cube);
     cubeRef.current = cube;
@@ -553,11 +568,57 @@ export default function OverlayCube({
 
     // Animation
     let time = 0;
+    let morphTime = 0;
+    let lastMorphState = "cube"; // Track the current shape for debugging
+    let isPaused = false;
+    let pauseStartTime = 0;
+    let currentShape = "cube";
+
     function animate(currentTime: number) {
       time += ANIMATION_SPEED;
 
-      // Batch matrix updates
+      // Handle morphing
       if (cubeRef.current) {
+        if (isPaused) {
+          // During pause, maintain current shape and just rotate
+          const pauseElapsed = currentTime - pauseStartTime;
+          if (pauseElapsed >= SHAPE_PAUSE_DURATION) {
+            isPaused = false;
+            morphTime = 0;
+          }
+        } else {
+          // During morphing
+          morphTime += ANIMATION_SPEED * 1000; // Convert to milliseconds
+          const morphProgress = morphTime / MORPH_DURATION;
+
+          if (morphProgress >= 1) {
+            // Morph complete, start pause
+            isPaused = true;
+            pauseStartTime = currentTime;
+            currentShape = currentShape === "cube" ? "rectangle" : "cube";
+
+            // Debug logging for shape changes
+            console.log("[OverlayCube] Shape changed:", {
+              from: lastMorphState,
+              to: currentShape,
+              timestamp: new Date().toISOString(),
+            });
+            lastMorphState = currentShape;
+          } else {
+            // Smooth easing for morphing
+            const easedProgress =
+              morphProgress < 0.5
+                ? 4 * morphProgress * morphProgress * morphProgress
+                : 1 - Math.pow(-2 * morphProgress + 2, 3) / 2;
+
+            // Update morph target influence
+            const targetInfluence =
+              currentShape === "cube" ? 1 - easedProgress : easedProgress;
+            cubeRef.current.morphTargetInfluences![0] = targetInfluence;
+          }
+        }
+
+        // Update rotation (happens during both pause and morph)
         cubeRef.current.rotation.x = time * CUBE_ROTATION_SPEED.x;
         cubeRef.current.rotation.y = time * CUBE_ROTATION_SPEED.y;
       }
