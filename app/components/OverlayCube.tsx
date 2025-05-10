@@ -5,9 +5,6 @@ import {
   TextGeometryParameters,
 } from "three/examples/jsm/geometries/TextGeometry.js";
 import { FontLoader } from "three/examples/jsm/loaders/FontLoader.js";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-import { useThree } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
 import { Message } from "ai";
 
 type SequenceState =
@@ -36,19 +33,13 @@ function cleanText(text: string): string {
   return cleanedText;
 }
 
-// Pre-create reusable vectors and objects to avoid garbage collection
-const TEMP_VECTOR = new THREE.Vector3();
-const TEMP_VECTOR2 = new THREE.Vector2();
-
 // Cache common values
 const FADE_DURATION = 400;
 const ANIMATION_SPEED = 0.01;
 const CUBE_ROTATION_SPEED = { x: 0.5, y: 0.3 };
-const LIGHT_ORBIT_SPEED = 0.5;
 const TEXT_MOVEMENT_SPEED = 0.3;
 const TEXT_MOVEMENT_AMPLITUDE = 0.05;
 const ENV_MAP_UPDATE_INTERVAL = 30;
-const LIGHT_UPDATE_INTERVAL = 2; // Update lights every 2 frames for better performance
 
 // Add light movement state with target values for smooth interpolation
 const lightState = {
@@ -104,7 +95,7 @@ export default function OverlayCube({
   sequenceState,
   lastCompleteContent,
 }: OverlayCubeProps) {
-  const [currentText, setCurrentText] = useState("");
+  const currentTextRef = useRef("");
   const [updateTextFn, setUpdateTextFn] = useState<
     ((text: string) => void) | null
   >(null);
@@ -447,11 +438,11 @@ export default function OverlayCube({
 
   // Update 3D text when currentText changes
   useEffect(() => {
-    if (updateTextFn && currentText) {
-      console.log("[OverlayCube] Updating 3D text:", currentText);
-      updateTextFn(currentText);
+    if (updateTextFn && currentTextRef.current) {
+      console.log("[OverlayCube] Updating 3D text:", currentTextRef.current);
+      updateTextFn(currentTextRef.current);
     }
-  }, [currentText, updateTextFn]);
+  }, [currentTextRef, updateTextFn]);
 
   // Initialize scenes and renderer
   useEffect(() => {
@@ -833,8 +824,8 @@ export default function OverlayCube({
       setUpdateTextFn(() => updateText);
 
       // Create initial text mesh
-      if (currentText) {
-        updateText(currentText);
+      if (currentTextRef.current) {
+        updateText(currentTextRef.current);
       }
     });
 
