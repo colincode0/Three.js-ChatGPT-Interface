@@ -22,16 +22,11 @@ export default function SceneWrapper() {
 
   // Add timing refs
   const llmStartTimeRef = useRef<number | null>(null);
-  const cameraStartTimeRef = useRef<number | null>(null);
   const lastStateChangeTimeRef = useRef<number>(Date.now());
   const cameraMovementCompleteRef = useRef(false);
   const llmCompleteRef = useRef(false);
 
-  const {
-    messages,
-    isLoading: isChatLoading,
-    ...restChatProps
-  } = useChat({
+  const { messages, ...restChatProps } = useChat({
     onFinish: (message) => {
       const now = Date.now();
       console.log("[SceneWrapper] LLM Stream Finished:", {
