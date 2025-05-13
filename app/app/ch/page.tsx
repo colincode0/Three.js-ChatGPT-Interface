@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 export default function CHPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -13,11 +13,11 @@ export default function CHPage() {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Scene setup
+    // Scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xffffff); // White background
+    scene.background = new THREE.Color(0xffffff);
 
-    // Camera setup
+    // Camera
     const camera = new THREE.PerspectiveCamera(
       60,
       window.innerWidth / window.innerHeight,
@@ -26,47 +26,93 @@ export default function CHPage() {
     );
     camera.position.set(0, 0, 5);
 
-    // Renderer setup
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: false,
+      depth: true,
+      stencil: false,
+      powerPreference: "high-performance",
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    // Enable proper depth sorting
+    renderer.sortObjects = true;
+    renderer.localClippingEnabled = true;
     containerRef.current.appendChild(renderer.domElement);
 
-    // Controls setup
+    // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.enableZoom = true;
-    controls.minDistance = 2;
-    controls.maxDistance = 20;
 
-    // Basic white lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
-    scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(2, 4, 5);
-    scene.add(directionalLight);
+    // Strong, neutral lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    dirLight.position.set(5, 10, 7);
+    scene.add(dirLight);
 
-    // Load the model
+    // Load the new cam_res.glb model
     const loader = new GLTFLoader();
     loader.load(
-      "/3d/ch/scene.gltf",
+      "/3d/cam/cam_res.glb",
       (gltf) => {
         const model = gltf.scene;
-        // Center the model
+
+        // Center and fit model
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         model.position.sub(center);
-        // Scale the model to fit nicely
+
+        // Scale to fit view
         const size = box.getSize(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z);
-        const scale = 2 / maxDim;
-        model.scale.multiplyScalar(scale);
+        const fitScale = 2 / maxDim;
+        model.scale.setScalar(fitScale);
+
+        // Ensure all textures use sRGB encoding and fix material settings
+        model.traverse((node) => {
+          if ((node as THREE.Mesh).isMesh) {
+            const mesh = node as THREE.Mesh;
+            const mats = Array.isArray(mesh.material)
+              ? mesh.material
+              : [mesh.material];
+            mats.forEach((mat) => {
+              if (mat) {
+                // Force double-sided rendering
+                mat.side = THREE.DoubleSide;
+                // Ensure proper depth sorting
+                mat.depthWrite = true;
+                mat.depthTest = true;
+                // Disable transparency unless explicitly needed
+                mat.transparent = false;
+                mat.opacity = 1.0;
+
+                // Handle textures if they exist
+                if ("map" in mat && mat.map) {
+                  mat.map.encoding = THREE.sRGBEncoding;
+                  mat.map.needsUpdate = true;
+                }
+                if ("emissiveMap" in mat && mat.emissiveMap) {
+                  mat.emissiveMap.encoding = THREE.sRGBEncoding;
+                  mat.emissiveMap.needsUpdate = true;
+                }
+              }
+            });
+          }
+        });
+
         scene.add(model);
         setLoading(false);
+
+        camera.position.set(0, 0, 4);
+        controls.target.set(0, 0, 0);
+        controls.update();
       },
       undefined,
-      () => {
+      (err) => {
         setError(
           "Failed to load 3D model. Please check the console for details."
         );
