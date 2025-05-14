@@ -1,13 +1,15 @@
 "use client";
 
+// <reference types="three" />
+
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 
 export default function CHPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,7 +42,6 @@ export default function CHPage() {
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.85;
     renderer.sortObjects = true;
@@ -70,7 +71,7 @@ export default function CHPage() {
     const rgbeLoader = new RGBELoader();
     rgbeLoader.load(
       "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/equirectangular/quarry_01_1k.hdr",
-      (texture) => {
+      (texture: THREE.DataTexture) => {
         const envMap = pmremGenerator.fromEquirectangular(texture).texture;
         scene.environment = envMap;
         pmremGenerator.dispose();
@@ -87,7 +88,6 @@ export default function CHPage() {
 
     const mainLight = new THREE.DirectionalLight(0xffffff, 0.12);
     mainLight.position.set(5, 0, 7);
-    mainLight.castShadow = true;
     scene.add(mainLight);
 
     const fillLight = new THREE.DirectionalLight(0xffffff, 0.08);
@@ -112,7 +112,7 @@ export default function CHPage() {
     const loader = new GLTFLoader();
     loader.load(
       "/3d/cam/cam_res.glb",
-      (gltf) => {
+      (gltf: GLTF) => {
         const model = gltf.scene;
 
         // Center and fit model
@@ -127,31 +127,38 @@ export default function CHPage() {
         model.scale.setScalar(fitScale);
 
         // Ensure all textures use sRGB encoding and fix material settings
-        model.traverse((node) => {
+        model.traverse((node: THREE.Object3D) => {
           if ((node as THREE.Mesh).isMesh) {
             const mesh = node as THREE.Mesh;
             const mats = Array.isArray(mesh.material)
               ? mesh.material
               : [mesh.material];
             mats.forEach((mat) => {
-              if (mat) {
+              if (mat && (mat as THREE.Material).isMaterial) {
                 // Force double-sided rendering
-                mat.side = THREE.DoubleSide;
+                (mat as THREE.Material).side = THREE.DoubleSide;
                 // Ensure proper depth sorting
-                mat.depthWrite = true;
-                mat.depthTest = true;
+                (mat as THREE.Material).depthWrite = true;
+                (mat as THREE.Material).depthTest = true;
                 // Disable transparency unless explicitly needed
-                mat.transparent = false;
-                mat.opacity = 1.0;
-
+                (mat as THREE.Material).transparent = false;
+                (mat as THREE.Material).opacity = 1.0;
                 // Handle textures if they exist
-                if ("map" in mat && mat.map) {
-                  mat.map.encoding = THREE.sRGBEncoding;
-                  mat.map.needsUpdate = true;
+                const materialWithMap = mat as THREE.Material & {
+                  map?: THREE.Texture;
+                  emissiveMap?: THREE.Texture;
+                };
+                if (
+                  materialWithMap.map &&
+                  materialWithMap.map instanceof THREE.Texture
+                ) {
+                  materialWithMap.map.needsUpdate = true;
                 }
-                if ("emissiveMap" in mat && mat.emissiveMap) {
-                  mat.emissiveMap.encoding = THREE.sRGBEncoding;
-                  mat.emissiveMap.needsUpdate = true;
+                if (
+                  materialWithMap.emissiveMap &&
+                  materialWithMap.emissiveMap instanceof THREE.Texture
+                ) {
+                  materialWithMap.emissiveMap.needsUpdate = true;
                 }
               }
             });
@@ -166,7 +173,7 @@ export default function CHPage() {
         controls.update();
       },
       undefined,
-      (err) => {
+      () => {
         setError(
           "Failed to load 3D model. Please check the console for details."
         );
