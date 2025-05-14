@@ -48,11 +48,38 @@ export default function CHPage() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    // Strong, neutral lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-    dirLight.position.set(5, 10, 7);
-    scene.add(dirLight);
+    // Enhanced lighting setup
+    // Stronger ambient light for overall brightness
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    scene.add(ambientLight);
+
+    // Softer directional lights for subtle shadows
+    const mainLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    mainLight.position.set(5, 10, 7);
+    mainLight.castShadow = true;
+    scene.add(mainLight);
+
+    // Softer fill light
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    fillLight.position.set(-5, 5, -7);
+    scene.add(fillLight);
+
+    // Very subtle rim light
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    rimLight.position.set(0, 0, -10);
+    scene.add(rimLight);
+
+    // Additional ambient fill lights for more even illumination
+    const ambientFill1 = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientFill1);
+
+    const ambientFill2 = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambientFill2);
+
+    // Subtle point light for extra dimension
+    const pointLight = new THREE.PointLight(0xffffff, 1.0, 20);
+    pointLight.position.set(3, 3, 3);
+    scene.add(pointLight);
 
     // Load the new cam_res.glb model
     const loader = new GLTFLoader();
