@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
 
 export default function CHPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -39,45 +40,68 @@ export default function CHPage() {
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
-    // Enable proper depth sorting
     renderer.sortObjects = true;
     renderer.localClippingEnabled = true;
     containerRef.current.appendChild(renderer.domElement);
+
+    // Add HDR environment map for lighting
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+
+    // Use built-in environment map
+    // Available HDRs:
+    //   'royal_esplanade_1k.hdr'
+    //   'venice_sunset_1k.hdr'
+    //   'warehouse_1k.hdr'
+    //   'studio_small_08_1k.hdr'
+    //   'night_1k.hdr'
+    //   'quarry_01_1k.hdr'
+    //   'dikhololo_night_1k.hdr'
+    //   'lebombo_1k.hdr'
+    //   'pisa_1k.hdr'
+    //   'potsdamer_platz_1k.hdr'
+    //   'spruit_sunrise_1k.hdr'
+    //   'syferfontein_0d_clear_1k.hdr'
+    //   'venice_sunset_1k.hdr'
+    // See: https://github.com/mrdoob/three.js/tree/dev/examples/textures/equirectangular
+    const rgbeLoader = new RGBELoader();
+    rgbeLoader.load(
+      "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/equirectangular/quarry_01_1k.hdr",
+      (texture) => {
+        const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        scene.environment = envMap;
+        pmremGenerator.dispose();
+      }
+    );
 
     // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    // Enhanced lighting setup
-    // Stronger ambient light for overall brightness
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    // Dramatically lower light intensities to let HDR dominate
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
     scene.add(ambientLight);
 
-    // Softer directional lights for subtle shadows
-    const mainLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    const mainLight = new THREE.DirectionalLight(0xffffff, 0.12);
     mainLight.position.set(5, 10, 7);
     mainLight.castShadow = true;
     scene.add(mainLight);
 
-    // Softer fill light
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.08);
     fillLight.position.set(-5, 5, -7);
     scene.add(fillLight);
 
-    // Very subtle rim light
-    const rimLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.05);
     rimLight.position.set(0, 0, -10);
     scene.add(rimLight);
 
-    // Additional ambient fill lights for more even illumination
-    const ambientFill1 = new THREE.AmbientLight(0xffffff, 0.4);
+    const ambientFill1 = new THREE.AmbientLight(0xffffff, 0.05);
     scene.add(ambientFill1);
 
-    const ambientFill2 = new THREE.AmbientLight(0xffffff, 0.3);
+    const ambientFill2 = new THREE.AmbientLight(0xffffff, 0.03);
     scene.add(ambientFill2);
 
-    // Subtle point light for extra dimension
-    const pointLight = new THREE.PointLight(0xffffff, 1.0, 20);
+    const pointLight = new THREE.PointLight(0xffffff, 0.1, 20);
     pointLight.position.set(3, 3, 3);
     scene.add(pointLight);
 
