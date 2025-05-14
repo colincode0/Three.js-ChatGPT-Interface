@@ -5,6 +5,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass";
 
 export default function CHPage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -39,7 +42,7 @@ export default function CHPage() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMappingExposure = 0.85;
     renderer.sortObjects = true;
     renderer.localClippingEnabled = true;
     containerRef.current.appendChild(renderer.domElement);
@@ -83,12 +86,12 @@ export default function CHPage() {
     scene.add(ambientLight);
 
     const mainLight = new THREE.DirectionalLight(0xffffff, 0.12);
-    mainLight.position.set(5, 10, 7);
+    mainLight.position.set(5, 0, 7);
     mainLight.castShadow = true;
     scene.add(mainLight);
 
     const fillLight = new THREE.DirectionalLight(0xffffff, 0.08);
-    fillLight.position.set(-5, 5, -7);
+    fillLight.position.set(-5, 0, -7);
     scene.add(fillLight);
 
     const rimLight = new THREE.DirectionalLight(0xffffff, 0.05);
@@ -102,7 +105,7 @@ export default function CHPage() {
     scene.add(ambientFill2);
 
     const pointLight = new THREE.PointLight(0xffffff, 0.1, 20);
-    pointLight.position.set(3, 3, 3);
+    pointLight.position.set(3, 0, 3);
     scene.add(pointLight);
 
     // Load the new cam_res.glb model
@@ -171,11 +174,24 @@ export default function CHPage() {
       }
     );
 
-    // Animation loop
+    // --- Postprocessing: Bloom ---
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+    // Subtle bloom: strength, radius, threshold
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.18, // strength (subtle)
+      0.4, // radius
+      0.85 // threshold
+    );
+    composer.addPass(bloomPass);
+
+    // Animation loop (use composer)
     const animate = () => {
       requestAnimationFrame(animate);
       controls.update();
-      renderer.render(scene, camera);
+      composer.render();
     };
     animate();
 
@@ -184,6 +200,7 @@ export default function CHPage() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
     };
     window.addEventListener("resize", handleResize);
 
@@ -194,6 +211,7 @@ export default function CHPage() {
         containerRef.current.removeChild(renderer.domElement);
       }
       renderer.dispose();
+      composer.dispose();
     };
   }, []);
 
