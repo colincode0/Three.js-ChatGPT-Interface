@@ -105,8 +105,12 @@ export default function CHPage() {
 
     // Load the new cam_res.glb model
     const loader = new GLTFLoader();
-    let spinningModel: THREE.Object3D | null = null;
-    const startTime = Date.now();
+    // Joystick mouse control
+    const mouse = { x: 0, y: 0 };
+    function onMouseMove(e: MouseEvent) {
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1; // -1 (left) to 1 (right)
+      mouse.y = -((e.clientY / window.innerHeight) * 2 - 1); // -1 (bottom) to 1 (top)
+    }
     loader.load(
       "/3d/cam/cam_res.glb",
       (gltf: GLTF) => {
@@ -163,19 +167,25 @@ export default function CHPage() {
         });
 
         scene.add(model);
-        spinningModel = model;
         setLoading(false);
 
         camera.position.set(0, 0, 4);
 
+        // Mouse joystick event
+        window.addEventListener("mousemove", onMouseMove);
+
         // Animation loop (use composer)
         const animate = () => {
           requestAnimationFrame(animate);
-          if (spinningModel) {
-            const elapsed = (Date.now() - startTime) / 1000; // seconds
-            spinningModel.rotation.y += 0.002; // much slower rotation
-            spinningModel.rotation.x = 0.16 * Math.sin(elapsed * 0.37); // increased tilt angle
-          }
+          // Joystick camera control
+          // Max angles (in radians)
+          const maxPan = 0.35; // up/down
+          const maxTilt = 0.5; // left/right
+          camera.position.x = 4 * Math.sin(mouse.x * maxTilt);
+          camera.position.y = 2 * Math.sin(mouse.y * maxPan);
+          camera.position.z =
+            4 * Math.cos(mouse.x * maxTilt) * Math.cos(mouse.y * maxPan);
+          camera.lookAt(0, 0, 0);
           composer.render();
         };
         animate();
@@ -214,6 +224,7 @@ export default function CHPage() {
     // Cleanup
     return () => {
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("mousemove", onMouseMove);
       if (containerRef.current?.contains(renderer.domElement)) {
         containerRef.current.removeChild(renderer.domElement);
       }
