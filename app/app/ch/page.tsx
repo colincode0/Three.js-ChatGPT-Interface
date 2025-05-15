@@ -4,7 +4,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -78,10 +77,6 @@ export default function CHPage() {
       }
     );
 
-    // Controls
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-
     // Dramatically lower light intensities to let HDR dominate
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
     scene.add(ambientLight);
@@ -110,6 +105,8 @@ export default function CHPage() {
 
     // Load the new cam_res.glb model
     const loader = new GLTFLoader();
+    let spinningModel: THREE.Object3D | null = null;
+    const startTime = Date.now();
     loader.load(
       "/3d/cam/cam_res.glb",
       (gltf: GLTF) => {
@@ -166,11 +163,22 @@ export default function CHPage() {
         });
 
         scene.add(model);
+        spinningModel = model;
         setLoading(false);
 
         camera.position.set(0, 0, 4);
-        controls.target.set(0, 0, 0);
-        controls.update();
+
+        // Animation loop (use composer)
+        const animate = () => {
+          requestAnimationFrame(animate);
+          if (spinningModel) {
+            const elapsed = (Date.now() - startTime) / 1000; // seconds
+            spinningModel.rotation.y += 0.002; // much slower rotation
+            spinningModel.rotation.x = 0.16 * Math.sin(elapsed * 0.37); // increased tilt angle
+          }
+          composer.render();
+        };
+        animate();
       },
       undefined,
       () => {
@@ -193,14 +201,6 @@ export default function CHPage() {
       0.85 // threshold
     );
     composer.addPass(bloomPass);
-
-    // Animation loop (use composer)
-    const animate = () => {
-      requestAnimationFrame(animate);
-      controls.update();
-      composer.render();
-    };
-    animate();
 
     // Handle window resize
     const handleResize = () => {
