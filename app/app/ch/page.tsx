@@ -111,6 +111,9 @@ export default function CHPage() {
       mouse.x = (e.clientX / window.innerWidth) * 2 - 1; // -1 (left) to 1 (right)
       mouse.y = -((e.clientY / window.innerHeight) * 2 - 1); // -1 (bottom) to 1 (top)
     }
+    // Elastic camera angles
+    let currentAngleY = 0; // horizontal/orbit
+    let currentAngleX = 0; // vertical/pan
     loader.load(
       "/3d/cam/cam_res.glb",
       (gltf: GLTF) => {
@@ -171,20 +174,26 @@ export default function CHPage() {
 
         camera.position.set(0, 0, 4);
 
-        // Mouse joystick event
+        // Mouse joystick event (desktop only)
         window.addEventListener("mousemove", onMouseMove);
 
         // Animation loop (use composer)
         const animate = () => {
           requestAnimationFrame(animate);
-          // Joystick camera control
-          // Max angles (in radians)
+          // Elastic joystick camera control (all devices)
           const maxPan = 0.35; // up/down
           const maxTilt = 0.5; // left/right
-          camera.position.x = 4 * Math.sin(mouse.x * maxTilt);
-          camera.position.y = 2 * Math.sin(mouse.y * maxPan);
-          camera.position.z =
-            4 * Math.cos(mouse.x * maxTilt) * Math.cos(mouse.y * maxPan);
+          const targetAngleY = mouse.x * maxTilt;
+          const targetAngleX = mouse.y * maxPan;
+          const lerpFactor = 0.08;
+          currentAngleY += (targetAngleY - currentAngleY) * lerpFactor;
+          currentAngleX += (targetAngleX - currentAngleX) * lerpFactor;
+          const radius = 4;
+          const y = Math.sin(currentAngleX) * radius;
+          const r = Math.cos(currentAngleX) * radius;
+          const x = Math.sin(currentAngleY) * r;
+          const z = Math.cos(currentAngleY) * r;
+          camera.position.set(x, y, z);
           camera.lookAt(0, 0, 0);
           composer.render();
         };
