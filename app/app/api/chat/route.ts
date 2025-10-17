@@ -6,7 +6,8 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-export const runtime = "edge";
+// Use Node.js runtime instead of edge for better OpenAI API compatibility
+export const runtime = "nodejs";
 
 interface OpenAIError {
   status?: number;
@@ -17,13 +18,34 @@ export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    // Create a chat completion
-    const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
-      stream: true,
-      messages: messages,
-      temperature: 0.7, // Slightly reduce randomness
-    });
+    // Validate input
+    if (!messages || !Array.isArray(messages)) {
+      return new Response(
+        JSON.stringify({ error: "Invalid messages format" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Create a chat completion with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+    const response = await openai.chat.completions.create(
+      {
+        model: "gpt-4-turbo-preview",
+        stream: true,
+        messages: messages,
+        temperature: 0.7, // Slightly reduce randomness
+      },
+      {
+        signal: controller.signal,
+      }
+    );
+
+    clearTimeout(timeoutId);
 
     // Convert the response into a friendly text-stream
     const stream = OpenAIStream(response);
@@ -32,6 +54,21 @@ export async function POST(req: Request) {
     return new StreamingTextResponse(stream);
   } catch (error: unknown) {
     console.error("OpenAI API Error:", error);
+
+    // Handle timeout/abort errors
+    if (error instanceof Error && error.name === "AbortError") {
+      return new Response(
+        JSON.stringify({
+          error: "Request timed out. Please try again.",
+        }),
+        {
+          status: 408,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    }
 
     const openAIError = error as OpenAIError;
 
@@ -44,6 +81,21 @@ export async function POST(req: Request) {
         }),
         {
           status: 429,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    }
+
+    // Handle authentication errors
+    if (openAIError.status === 401) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid API key. Please check your OpenAI configuration.",
+        }),
+        {
+          status: 401,
           headers: {
             "Content-Type": "application/json",
           },

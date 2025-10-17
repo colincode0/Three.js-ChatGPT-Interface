@@ -27,6 +27,7 @@ export default function SceneWrapper() {
   const llmCompleteRef = useRef(false);
 
   const { messages, ...restChatProps } = useChat({
+    api: "/api/chat",
     onFinish: (message) => {
       const now = Date.now();
       console.log("[SceneWrapper] LLM Stream Finished:", {
@@ -180,11 +181,23 @@ export default function SceneWrapper() {
         currentState: sequenceState,
         timestamp: new Date().toISOString(),
       });
+
+      // Set up a timeout to prevent endless loading
+      const timeoutId = setTimeout(() => {
+        console.warn(
+          "[SceneWrapper] Request timeout - resetting to idle state"
+        );
+        setSequenceState("idle");
+        lastStateChangeTimeRef.current = Date.now();
+      }, 45000); // 45 second timeout (longer than server timeout)
+
       try {
         setSequenceState("loading");
         lastStateChangeTimeRef.current = now;
         await handleSubmit(e);
+        clearTimeout(timeoutId);
       } catch (error) {
+        clearTimeout(timeoutId);
         console.error("[SceneWrapper] Submit Error:", {
           error,
           currentState: sequenceState,
