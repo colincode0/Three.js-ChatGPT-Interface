@@ -20,7 +20,7 @@ function cleanText(text: string): string {
     .replace(/\\n/g, "\n") // Replace literal \n with actual line breaks
     .trim();
 
-  console.log("Cleaned text:", cleanedText);
+  devLog("Cleaned text:", cleanedText);
   return cleanedText;
 }
 
@@ -30,6 +30,80 @@ const ANIMATION_SPEED = 0.01;
 const CUBE_ROTATION_SPEED = { x: 0.5, y: 0.3 };
 const MORPH_DURATION = 800; // Duration for morphing transition
 const SHAPE_PAUSE_DURATION = 810; // 0.81 second pause at each shape
+
+// Development logging helper
+const isDev = process.env.NODE_ENV === "development";
+const devLog = (...args: unknown[]) => {
+  if (isDev) console.log(...args);
+};
+
+// Optimized easing function - reused throughout component
+const easeInOutCubic = (progress: number): number => {
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+};
+
+// DOM creation utilities
+const createStyledElement = (
+  tag: string,
+  styles: Record<string, string>,
+  className?: string
+): HTMLElement => {
+  const element = document.createElement(tag) as HTMLElement;
+  Object.assign(element.style, styles);
+  if (className) element.className = className;
+  return element;
+};
+
+const createScrollbarStyles = (): HTMLStyleElement => {
+  const style = document.createElement("style");
+  style.textContent = `
+    #overlay-cube-canvas .text-content {
+      scroll-behavior: smooth;
+    }
+    #overlay-cube-canvas .text-content::-webkit-scrollbar {
+      width: 8px;
+    }
+    #overlay-cube-canvas .text-content::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+    #overlay-cube-canvas .text-content::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 4px;
+    }
+    #overlay-cube-canvas .text-content::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.5);
+    }
+    #overlay-cube-canvas .scroll-indicator {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      width: 20px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+      z-index: 4;
+    }
+    #overlay-cube-canvas .scroll-indicator.visible {
+      opacity: 1;
+    }
+    #overlay-cube-canvas .scroll-indicator::after {
+      content: "↓";
+      color: white;
+      font-size: 12px;
+      font-weight: bold;
+    }
+  `;
+  return style;
+};
 
 export default function OverlayCube({
   messages,
@@ -48,7 +122,7 @@ export default function OverlayCube({
   const fadeOutText = useCallback(() => {
     if (!textContentRef.current) return;
 
-    console.log("[OverlayCube] Starting text fade out", {
+    devLog("[OverlayCube] Starting text fade out", {
       timestamp: new Date().toISOString(),
     });
 
@@ -60,10 +134,7 @@ export default function OverlayCube({
       const progress = Math.min(elapsed / FADE_DURATION, 1);
 
       // Smooth easing
-      const easedProgress =
-        progress < 0.5
-          ? 4 * progress * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      const easedProgress = easeInOutCubic(progress);
 
       // Update opacity
       textElement.style.opacity = String(1 - easedProgress);
@@ -71,10 +142,12 @@ export default function OverlayCube({
       if (progress < 1) {
         requestAnimationFrame(animate);
       } else {
-        console.log("[OverlayCube] Text fade out complete", {
+        devLog("[OverlayCube] Text fade out complete", {
           timestamp: new Date().toISOString(),
         });
-        setDisplayedText("");
+        // Clear the text content but don't reset displayedText state
+        textElement.textContent = "";
+        textElement.style.opacity = "0";
       }
     };
 
@@ -106,7 +179,7 @@ export default function OverlayCube({
       animateText();
     }
 
-    console.log("[OverlayCube] Starting cube fade out", {
+    devLog("[OverlayCube] Starting cube fade out", {
       timestamp: new Date().toISOString(),
     });
 
@@ -119,10 +192,7 @@ export default function OverlayCube({
       const progress = Math.min(elapsed / duration, 1);
 
       // Smooth easing
-      const easedProgress =
-        progress < 0.5
-          ? 4 * progress * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      const easedProgress = easeInOutCubic(progress);
 
       if (cubeRef.current) {
         const material = cubeRef.current.material as THREE.MeshPhongMaterial;
@@ -133,13 +203,13 @@ export default function OverlayCube({
       if (progress < 1) {
         requestAnimationFrame(animate);
       } else {
-        console.log("[OverlayCube] Cube fade out complete", {
+        devLog("[OverlayCube] Cube fade out complete", {
           timestamp: new Date().toISOString(),
         });
 
         // Start text render after cube is fully faded out
         if (lastCompleteContent) {
-          console.log("[OverlayCube] Starting text render after cube fade");
+          devLog("[OverlayCube] Starting text render after cube fade");
           setDisplayedText(cleanText(lastCompleteContent));
         }
       }
@@ -150,7 +220,7 @@ export default function OverlayCube({
 
   // Handle state changes
   useEffect(() => {
-    console.log("[OverlayCube] State Change:", {
+    devLog("[OverlayCube] State Change:", {
       sequenceState,
       hasCompleteContent: !!lastCompleteContent,
       contentLength: lastCompleteContent?.length,
@@ -168,21 +238,49 @@ export default function OverlayCube({
     }
 
     if (sequenceState === "loading") {
-      console.log("[OverlayCube] Loading state - handling transition");
+      devLog("[OverlayCube] Loading state - handling transition");
       setIsVisible(true);
       setIsFading(false);
 
-      // Always fade out text first if it exists
-      if (displayedText) {
-        console.log(
-          "[OverlayCube] Fading out existing text before showing cube"
+      // Only show loading cube if we don't have displayed text yet
+      // This prevents showing loading cube when we already have content displayed
+      if (!displayedText) {
+        devLog("[OverlayCube] No displayed text - showing loading cube");
+
+        // Show cube immediately
+        if (cubeRef.current) {
+          const material = cubeRef.current.material as THREE.MeshPhongMaterial;
+          material.opacity = 1;
+          cubeOpacityRef.current = 1;
+          if (loadingTextRef.current) {
+            // Animate loading text fade in
+            const startTime = performance.now();
+            const duration = FADE_DURATION;
+            const animateText = () => {
+              const elapsed = performance.now() - startTime;
+              const progress = Math.min(elapsed / duration, 1);
+              const easedProgress = easeInOutCubic(progress);
+              loadingTextRef.current!.style.opacity = String(
+                0.8 * easedProgress
+              );
+              if (progress < 1) {
+                requestAnimationFrame(animateText);
+              }
+            };
+            animateText();
+          }
+        }
+      } else {
+        devLog(
+          "[OverlayCube] Already have displayed text - fading out text first"
         );
+        // Fade out existing text before showing loading cube
         fadeOutText();
 
-        // Show cube after text fade out
+        // Show loading cube after text fade out
         fadeTimeoutRef.current = setTimeout(() => {
           if (cubeRef.current) {
-            console.log("[OverlayCube] Showing cube after text fade");
+            devLog("[OverlayCube] Showing loading cube after text fade");
             const material = cubeRef.current
               .material as THREE.MeshPhongMaterial;
             material.opacity = 1;
@@ -194,11 +292,7 @@ export default function OverlayCube({
               const animateText = () => {
                 const elapsed = performance.now() - startTime;
                 const progress = Math.min(elapsed / duration, 1);
-                // Smooth easing
-                const easedProgress =
-                  progress < 0.5
-                    ? 4 * progress * progress * progress
-                    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+                const easedProgress = easeInOutCubic(progress);
                 loadingTextRef.current!.style.opacity = String(
                   0.8 * easedProgress
                 );
@@ -210,62 +304,27 @@ export default function OverlayCube({
             }
           }
         }, FADE_DURATION);
-      } else {
-        // Show cube immediately if no text to fade out
-        if (cubeRef.current) {
-          console.log(
-            "[OverlayCube] Showing cube immediately (no text to fade)"
-          );
-          const material = cubeRef.current.material as THREE.MeshPhongMaterial;
-          material.opacity = 1;
-          cubeOpacityRef.current = 1;
-          if (loadingTextRef.current) {
-            // Animate loading text fade in
-            const startTime = performance.now();
-            const duration = FADE_DURATION;
-            const animateText = () => {
-              const elapsed = performance.now() - startTime;
-              const progress = Math.min(elapsed / duration, 1);
-              // Smooth easing
-              const easedProgress =
-                progress < 0.5
-                  ? 4 * progress * progress * progress
-                  : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-              loadingTextRef.current!.style.opacity = String(
-                0.8 * easedProgress
-              );
-              if (progress < 1) {
-                requestAnimationFrame(animateText);
-              }
-            };
-            animateText();
-          }
-        }
       }
     } else if (sequenceState === "text_rendering") {
-      console.log("[OverlayCube] Text rendering state:", {
+      devLog("[OverlayCube] Text rendering state:", {
         hasCompleteContent: !!lastCompleteContent,
         contentLength: lastCompleteContent?.length,
         hasDisplayedText: !!displayedText,
       });
 
       // Start fading out cube when text rendering begins
-      if (cubeRef.current) {
-        console.log("[OverlayCube] Starting cube fade out for text rendering");
+      if (cubeRef.current && cubeOpacityRef.current > 0) {
+        devLog("[OverlayCube] Starting cube fade out for text rendering");
         fadeOutCube();
         setIsFading(true);
         if (loadingTextRef.current) {
-          // Animate loading text fade out (in case not already handled)
+          // Animate loading text fade out
           const startTime = performance.now();
           const duration = FADE_DURATION;
           const animateText = () => {
             const elapsed = performance.now() - startTime;
             const progress = Math.min(elapsed / duration, 1);
-            // Smooth easing
-            const easedProgress =
-              progress < 0.5
-                ? 4 * progress * progress * progress
-                : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+            const easedProgress = easeInOutCubic(progress);
             loadingTextRef.current!.style.opacity = String(
               0.8 * (1 - easedProgress)
             );
@@ -280,7 +339,7 @@ export default function OverlayCube({
       // Keep text visible during text_rendering state
       setIsVisible(true);
     } else if (sequenceState === "complete") {
-      console.log("[OverlayCube] Complete state:", {
+      devLog("[OverlayCube] Complete state:", {
         hasCompleteContent: !!lastCompleteContent,
         contentLength: lastCompleteContent?.length,
         hasDisplayedText: !!displayedText,
@@ -288,9 +347,7 @@ export default function OverlayCube({
 
       // Ensure cube is faded out in complete state
       if (cubeRef.current && cubeOpacityRef.current > 0) {
-        console.log(
-          "[OverlayCube] Ensuring cube is faded out in complete state"
-        );
+        devLog("[OverlayCube] Ensuring cube is faded out in complete state");
         fadeOutCube();
         setIsFading(true);
         if (loadingTextRef.current) {
@@ -320,12 +377,23 @@ export default function OverlayCube({
       setIsVisible(true);
     } else {
       // idle state
-      console.log("[OverlayCube] Idle state - hiding everything");
+      devLog("[OverlayCube] Idle state - hiding everything");
       setIsVisible(false);
       setIsFading(false);
       setDisplayedText("");
+
+      // Hide cube and loading text
+      if (cubeRef.current) {
+        const material = cubeRef.current.material as THREE.MeshPhongMaterial;
+        material.opacity = 0;
+        cubeOpacityRef.current = 0;
+      }
       if (loadingTextRef.current) {
         loadingTextRef.current.style.opacity = "0";
+      }
+      if (textContentRef.current) {
+        textContentRef.current.style.opacity = "0";
+        textContentRef.current.textContent = "";
       }
     }
   }, [
@@ -341,15 +409,15 @@ export default function OverlayCube({
   // Handle camera movement completion
   useEffect(() => {
     const handleCameraMovementComplete = () => {
-      console.log("[OverlayCube] Camera Movement Complete:", {
+      devLog("[OverlayCube] Camera Movement Complete:", {
         hasCompleteContent: !!lastCompleteContent,
         sequenceState,
         timestamp: new Date().toISOString(),
       });
 
-      // If we have complete content, start text render regardless of state
-      if (lastCompleteContent) {
-        console.log("[OverlayCube] Starting text render with content:", {
+      // Only start text render if we have complete content and we're in loading state
+      if (lastCompleteContent && sequenceState === "loading") {
+        devLog("[OverlayCube] Starting text render with content:", {
           contentLength: lastCompleteContent.length,
           timestamp: new Date().toISOString(),
         });
@@ -357,7 +425,7 @@ export default function OverlayCube({
         // Set the text content
         setDisplayedText(cleanText(lastCompleteContent));
       } else {
-        console.log("[OverlayCube] Not starting text render:", {
+        devLog("[OverlayCube] Not starting text render:", {
           sequenceState,
           hasCompleteContent: !!lastCompleteContent,
         });
@@ -376,11 +444,11 @@ export default function OverlayCube({
     };
   }, [sequenceState, lastCompleteContent]);
 
-  // Handle message updates
+  // Handle message updates - only update text when we have a new complete message
   useEffect(() => {
     if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
-      console.log("[OverlayCube] Message Update:", {
+      devLog("[OverlayCube] Message Update:", {
         role: lastMessage.role,
         sequenceState,
         messageId: lastMessage.id,
@@ -389,136 +457,105 @@ export default function OverlayCube({
         timestamp: new Date().toISOString(),
       });
 
-      // Only store the message when it's from assistant and loading is complete
+      // Only update displayed text when we have a new assistant message and we're in complete state
+      // This prevents unnecessary re-renders and state changes
       if (lastMessage.role === "assistant" && sequenceState === "complete") {
-        console.log("[OverlayCube] Storing new message");
-        setDisplayedText(cleanText(lastMessage.content));
+        const newText = cleanText(lastMessage.content);
+        // Only update if the text is actually different to prevent unnecessary re-renders
+        if (newText !== displayedText) {
+          devLog("[OverlayCube] Storing new message");
+          setDisplayedText(newText);
+        }
       }
     }
-  }, [messages, sequenceState]);
+  }, [messages, sequenceState, displayedText]);
 
   // Initialize scenes and renderer
   useEffect(() => {
     let container = document.getElementById("overlay-cube-canvas");
     if (!container) {
-      container = document.createElement("div");
+      container = createStyledElement("div", {
+        position: "absolute",
+        inset: "0",
+        pointerEvents: "none",
+        zIndex: "50",
+      });
       container.id = "overlay-cube-canvas";
-      container.style.position = "absolute";
-      container.style.inset = "0";
-      container.style.pointerEvents = "none";
-      container.style.zIndex = "50";
 
-      const backgroundDiv = document.createElement("div");
-      backgroundDiv.style.position = "absolute";
-      backgroundDiv.style.left = "50%";
-      backgroundDiv.style.top = "50%";
-      backgroundDiv.style.transform = "translate(-50%, -50%)";
-      backgroundDiv.style.width = "80%";
-      backgroundDiv.style.maxWidth = "700px";
-      backgroundDiv.style.height = "60%";
-      backgroundDiv.style.backgroundColor = "rgb(0, 0, 0)";
-      backgroundDiv.style.border = "1px solid rgba(255, 255, 255, 0.2)";
-      backgroundDiv.style.borderRadius = "0.5rem";
-      backgroundDiv.style.zIndex = "1";
+      const backgroundDiv = createStyledElement("div", {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        transform: "translate(-50%, -50%)",
+        width: "80%",
+        maxWidth: "700px",
+        height: "60%",
+        backgroundColor: "rgb(0, 0, 0)",
+        border: "1px solid rgba(255, 255, 255, 0.2)",
+        borderRadius: "0.5rem",
+        zIndex: "1",
+      });
 
       // Add loading text INSIDE the black container
-      const loadingText = document.createElement("div");
+      const loadingText = createStyledElement("div", {
+        position: "absolute",
+        left: "50%",
+        top: "60%",
+        transform: "translate(-50%, 0)",
+        color: "white",
+        fontSize: "1rem",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        opacity: "0",
+        zIndex: "3",
+        textTransform: "lowercase",
+        letterSpacing: "0.05em",
+      });
       loadingText.textContent = "loading 3d LLM output";
-      loadingText.style.position = "absolute";
-      loadingText.style.left = "50%";
-      loadingText.style.top = "60%"; // 60% from the top of the black container
-      loadingText.style.transform = "translate(-50%, 0)";
-      loadingText.style.color = "white";
-      loadingText.style.fontSize = "1rem";
-      loadingText.style.fontFamily = "system-ui, -apple-system, sans-serif";
-      loadingText.style.opacity = "0"; // Start invisible
-      loadingText.style.zIndex = "3";
-      loadingText.style.textTransform = "lowercase";
-      loadingText.style.letterSpacing = "0.05em";
       backgroundDiv.appendChild(loadingText);
-      loadingTextRef.current = loadingText;
+      loadingTextRef.current = loadingText as HTMLDivElement;
 
       // Add text content area
-      const textContent = document.createElement("div");
-      textContent.style.position = "absolute";
-      textContent.style.left = "50%";
-      textContent.style.top = "50%";
-      textContent.style.transform = "translate(-50%, -50%)";
-      textContent.style.width = "90%";
-      textContent.style.height = "80%";
-      textContent.style.color = "white";
-      textContent.style.fontSize = "0.9rem";
-      textContent.style.fontFamily = "system-ui, -apple-system, sans-serif";
-      textContent.style.lineHeight = "1.6";
-      textContent.style.overflowY = "auto";
-      textContent.style.overflowX = "hidden";
-      textContent.style.padding = "1rem";
-      textContent.style.opacity = "0";
-      textContent.style.zIndex = "10"; // Higher z-index to ensure it's above other elements
-      textContent.style.whiteSpace = "pre-wrap";
-      textContent.style.wordWrap = "break-word";
-      textContent.style.boxSizing = "border-box";
-      textContent.style.pointerEvents = "auto"; // Enable pointer events for scrolling
+      const textContent = createStyledElement(
+        "div",
+        {
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "90%",
+          height: "80%",
+          color: "white",
+          fontSize: "0.9rem",
+          fontFamily: "system-ui, -apple-system, sans-serif",
+          lineHeight: "1.6",
+          overflowY: "auto",
+          overflowX: "hidden",
+          padding: "1rem",
+          opacity: "0",
+          zIndex: "10",
+          whiteSpace: "pre-wrap",
+          wordWrap: "break-word",
+          boxSizing: "border-box",
+          pointerEvents: "auto",
+          scrollbarWidth: "thin",
+          scrollbarColor: "#333 #222",
+        },
+        "text-content"
+      );
 
-      // Add custom scrollbar styling
-      textContent.style.scrollbarWidth = "thin";
-      textContent.style.scrollbarColor = "#333 #222";
-
-      // Webkit scrollbar styling with smooth scrolling
-      const scrollbarStyle = document.createElement("style");
-      scrollbarStyle.textContent = `
-        #overlay-cube-canvas .text-content {
-          scroll-behavior: smooth;
-        }
-        #overlay-cube-canvas .text-content::-webkit-scrollbar {
-          width: 8px;
-        }
-        #overlay-cube-canvas .text-content::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 4px;
-        }
-        #overlay-cube-canvas .text-content::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.3);
-          border-radius: 4px;
-        }
-        #overlay-cube-canvas .text-content::-webkit-scrollbar-thumb:hover {
-          background: rgba(255, 255, 255, 0.5);
-        }
-        #overlay-cube-canvas .scroll-indicator {
-          position: absolute;
-          bottom: 10px;
-          right: 10px;
-          width: 20px;
-          height: 20px;
-          background: rgba(255, 255, 255, 0.2);
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          opacity: 0;
-          transition: opacity 0.3s ease;
-          pointer-events: none;
-          z-index: 4;
-        }
-        #overlay-cube-canvas .scroll-indicator.visible {
-          opacity: 1;
-        }
-        #overlay-cube-canvas .scroll-indicator::after {
-          content: "↓";
-          color: white;
-          font-size: 12px;
-          font-weight: bold;
-        }
-      `;
+      // Add scrollbar styles
+      const scrollbarStyle = createScrollbarStyles();
       document.head.appendChild(scrollbarStyle);
 
-      textContent.className = "text-content";
       backgroundDiv.appendChild(textContent);
-      textContentRef.current = textContent;
+      textContentRef.current = textContent as HTMLDivElement;
 
       // Add scroll indicator
-      const scrollIndicator = document.createElement("div");
-      scrollIndicator.className = "scroll-indicator";
+      const scrollIndicator = createStyledElement(
+        "div",
+        {},
+        "scroll-indicator"
+      );
       backgroundDiv.appendChild(scrollIndicator);
 
       container.appendChild(backgroundDiv);
@@ -593,64 +630,61 @@ export default function OverlayCube({
     cubeScene.add(cubeAmbientLight);
     cubeScene.add(cubePointLight);
 
-    // Animation
+    // Optimized animation loop
     let time = 0;
     let morphTime = 0;
-    let lastMorphState = "cube"; // Track the current shape for debugging
+    let lastMorphState = "cube";
     let isPaused = false;
     let pauseStartTime = 0;
     let currentShape = "cube";
+    let animationId: number | null = null;
+    let lastFrameTime = 0;
 
     function animate(currentTime: number) {
+      // Throttle animation to 60fps max
+      if (currentTime - lastFrameTime < 16) {
+        animationId = requestAnimationFrame(animate);
+        return;
+      }
+      lastFrameTime = currentTime;
+
       time += ANIMATION_SPEED;
 
       // Handle morphing
       if (cubeRef.current) {
         if (isPaused) {
-          // During pause, maintain current shape and just rotate
           const pauseElapsed = currentTime - pauseStartTime;
           if (pauseElapsed >= SHAPE_PAUSE_DURATION) {
             isPaused = false;
             morphTime = 0;
           }
         } else {
-          // During morphing
-          morphTime += ANIMATION_SPEED * 1000; // Convert to milliseconds
+          morphTime += ANIMATION_SPEED * 1000;
           const morphProgress = morphTime / MORPH_DURATION;
 
           if (morphProgress >= 1) {
-            // Morph complete, start pause
             isPaused = true;
             pauseStartTime = currentTime;
             currentShape = currentShape === "cube" ? "rectangle" : "cube";
-
-            // Debug logging for shape changes
-            console.log("[OverlayCube] Shape changed:", {
+            devLog("[OverlayCube] Shape changed:", {
               from: lastMorphState,
               to: currentShape,
               timestamp: new Date().toISOString(),
             });
             lastMorphState = currentShape;
           } else {
-            // Smooth easing for morphing
-            const easedProgress =
-              morphProgress < 0.5
-                ? 4 * morphProgress * morphProgress * morphProgress
-                : 1 - Math.pow(-2 * morphProgress + 2, 3) / 2;
-
-            // Update morph target influence
+            const easedProgress = easeInOutCubic(morphProgress);
             const targetInfluence =
               currentShape === "cube" ? 1 - easedProgress : easedProgress;
             cubeRef.current.morphTargetInfluences![0] = targetInfluence;
           }
         }
 
-        // Update rotation (happens during both pause and morph)
         cubeRef.current.rotation.x = time * CUBE_ROTATION_SPEED.x;
         cubeRef.current.rotation.y = time * CUBE_ROTATION_SPEED.y;
       }
 
-      // Optimize rendering
+      // Only render if cube is visible
       renderer.autoClear = false;
       renderer.clear();
       renderer.render(scene, camera);
@@ -659,11 +693,11 @@ export default function OverlayCube({
         renderer.render(cubeScene, cubeCamera);
       }
 
-      requestAnimationFrame(animate);
+      animationId = requestAnimationFrame(animate);
     }
 
     // Start animation loop
-    animate(performance.now());
+    animationId = requestAnimationFrame(animate);
 
     // Optimize resize handler with debounce
     let resizeTimeout: NodeJS.Timeout;
@@ -686,6 +720,9 @@ export default function OverlayCube({
 
     // Cleanup
     return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
       window.removeEventListener("resize", handleResize);
       renderer.dispose();
       if (container && container.contains(renderer.domElement)) {
@@ -697,7 +734,7 @@ export default function OverlayCube({
   // Handle text display updates
   useEffect(() => {
     if (textContentRef.current && displayedText) {
-      console.log("[OverlayCube] Displaying text:", {
+      devLog("[OverlayCube] Displaying text:", {
         textLength: displayedText.length,
         timestamp: new Date().toISOString(),
       });
@@ -733,23 +770,17 @@ export default function OverlayCube({
         const progress = Math.min(elapsed / FADE_DURATION, 1);
 
         // Smooth easing
-        const easedProgress =
-          progress < 0.5
-            ? 4 * progress * progress * progress
-            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+        const easedProgress = easeInOutCubic(progress);
 
         textContentRef.current!.style.opacity = String(easedProgress);
 
         if (progress < 1) {
           requestAnimationFrame(fadeIn);
         } else {
-          console.log(
-            "[OverlayCube] Text fade in complete, dispatching event",
-            {
-              timestamp: new Date().toISOString(),
-              textLength: displayedText.length,
-            }
-          );
+          devLog("[OverlayCube] Text fade in complete, dispatching event", {
+            timestamp: new Date().toISOString(),
+            textLength: displayedText.length,
+          });
           window.dispatchEvent(new CustomEvent("textRenderComplete"));
         }
       };
@@ -761,7 +792,7 @@ export default function OverlayCube({
   // Handle scroll indicator visibility
   useEffect(() => {
     const handleScroll = () => {
-      console.log("[OverlayCube] Scroll event detected", {
+      devLog("[OverlayCube] Scroll event detected", {
         scrollTop: textContentRef.current?.scrollTop,
         scrollHeight: textContentRef.current?.scrollHeight,
         clientHeight: textContentRef.current?.clientHeight,
@@ -798,7 +829,7 @@ export default function OverlayCube({
         textContentRef.current.removeEventListener("scroll", handleScroll);
       }
     };
-  }, [displayedText]);
+  }, []); // Empty deps - scroll handler doesn't need displayedText dependency
 
   // Cleanup on unmount
   useEffect(() => {
