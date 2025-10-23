@@ -101,6 +101,41 @@ const createScrollbarStyles = (): HTMLStyleElement => {
       font-size: 12px;
       font-weight: bold;
     }
+    
+    /* Mobile responsive styles for loading text */
+    @media (max-width: 768px) {
+      #overlay-cube-canvas .loading-text-container {
+        font-size: 0.9rem !important;
+        padding: 0 0.5rem !important;
+        max-width: 95% !important;
+        top: 58% !important;
+      }
+      #overlay-cube-canvas .loading-text-container > div:first-child {
+        font-size: 0.9rem !important;
+        margin-bottom: 0.2rem !important;
+      }
+      #overlay-cube-canvas .loading-text-container > div:last-child {
+        font-size: 0.75rem !important;
+        line-height: 1.1 !important;
+      }
+    }
+    
+    @media (max-width: 480px) {
+      #overlay-cube-canvas .loading-text-container {
+        font-size: 0.85rem !important;
+        padding: 0 0.25rem !important;
+        max-width: 98% !important;
+        top: 56% !important;
+      }
+      #overlay-cube-canvas .loading-text-container > div:first-child {
+        font-size: 0.85rem !important;
+        margin-bottom: 0.15rem !important;
+      }
+      #overlay-cube-canvas .loading-text-container > div:last-child {
+        font-size: 0.7rem !important;
+        line-height: 1.0 !important;
+      }
+    }
   `;
   return style;
 };
@@ -115,6 +150,7 @@ export default function OverlayCube({
   const [displayedText, setDisplayedText] = useState<string>("");
   const fadeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const loadingTextRef = useRef<HTMLDivElement | null>(null);
+  const loadingSubtitleRef = useRef<HTMLDivElement | null>(null);
   const textContentRef = useRef<HTMLDivElement | null>(null);
   const cubeRef = useRef<THREE.Mesh | null>(null);
   const cubeOpacityRef = useRef(0);
@@ -157,7 +193,7 @@ export default function OverlayCube({
   const fadeOutCube = useCallback(() => {
     if (!cubeRef.current) return;
     if (loadingTextRef.current) {
-      // Animate loading text fade out
+      // Animate loading text container fade out
       const startTime = performance.now();
       const duration = 400;
       const animateText = () => {
@@ -253,7 +289,7 @@ export default function OverlayCube({
           material.opacity = 1;
           cubeOpacityRef.current = 1;
           if (loadingTextRef.current) {
-            // Animate loading text fade in
+            // Animate loading text container fade in
             const startTime = performance.now();
             const duration = FADE_DURATION;
             const animateText = () => {
@@ -286,7 +322,7 @@ export default function OverlayCube({
             material.opacity = 1;
             cubeOpacityRef.current = 1;
             if (loadingTextRef.current) {
-              // Animate loading text fade in
+              // Animate loading text container fade in
               const startTime = performance.now();
               const duration = FADE_DURATION;
               const animateText = () => {
@@ -318,7 +354,7 @@ export default function OverlayCube({
         fadeOutCube();
         setIsFading(true);
         if (loadingTextRef.current) {
-          // Animate loading text fade out
+          // Animate loading text container fade out
           const startTime = performance.now();
           const duration = FADE_DURATION;
           const animateText = () => {
@@ -351,7 +387,7 @@ export default function OverlayCube({
         fadeOutCube();
         setIsFading(true);
         if (loadingTextRef.current) {
-          // Animate loading text fade out (in case not already handled)
+          // Animate loading text container fade out (in case not already handled)
           const startTime = performance.now();
           const duration = FADE_DURATION;
           const animateText = () => {
@@ -496,23 +532,48 @@ export default function OverlayCube({
         zIndex: "1",
       });
 
-      // Add loading text INSIDE the black container
-      const loadingText = createStyledElement("div", {
-        position: "absolute",
-        left: "50%",
-        top: "60%",
-        transform: "translate(-50%, 0)",
-        color: "white",
-        fontSize: "1rem",
-        fontFamily: "system-ui, -apple-system, sans-serif",
-        opacity: "0",
-        zIndex: "3",
-        textTransform: "lowercase",
-        letterSpacing: "0.05em",
-      });
-      loadingText.textContent = "loading 3d LLM output";
-      backgroundDiv.appendChild(loadingText);
-      loadingTextRef.current = loadingText as HTMLDivElement;
+      // Add loading text container INSIDE the black container
+      const loadingTextContainer = createStyledElement(
+        "div",
+        {
+          position: "absolute",
+          left: "50%",
+          top: "60%",
+          transform: "translate(-50%, 0)",
+          color: "white",
+          fontSize: "1rem",
+          fontFamily: "system-ui, -apple-system, sans-serif",
+          opacity: "0",
+          zIndex: "3",
+          textAlign: "center",
+          padding: "0 1rem",
+          maxWidth: "90%",
+          lineHeight: "1.2",
+        },
+        "loading-text-container"
+      );
+
+      // Create main loading text
+      const loadingText = document.createElement("div");
+      loadingText.textContent = "Loading 3D LLM output";
+      loadingText.style.marginBottom = "0.25rem";
+      loadingText.style.fontSize = "1rem";
+      loadingText.style.letterSpacing = "0.05em";
+
+      // Create subtitle
+      const loadingSubtitle = document.createElement("div");
+      loadingSubtitle.textContent = "(Longer responses take more time)";
+      loadingSubtitle.style.fontSize = "0.8rem";
+      loadingSubtitle.style.color = "rgba(255, 255, 255, 0.7)";
+      loadingSubtitle.style.fontStyle = "italic";
+      loadingSubtitle.style.lineHeight = "1.1";
+
+      loadingTextContainer.appendChild(loadingText);
+      loadingTextContainer.appendChild(loadingSubtitle);
+      backgroundDiv.appendChild(loadingTextContainer);
+
+      loadingTextRef.current = loadingTextContainer as HTMLDivElement;
+      loadingSubtitleRef.current = loadingSubtitle as HTMLDivElement;
 
       // Add text content area
       const textContent = createStyledElement(
