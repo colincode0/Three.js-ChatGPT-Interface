@@ -2,7 +2,7 @@
 
 This web application combines **Three.js 3D graphics** with **OpenAI's GPT-4 Turbo** to create an immersive, interactive AI chat experience. Users interact with a 3D brain model through natural language, receiving AI-generated responses displayed in a sleek, animated interface.
 
-🌐 **Live Demo**: [https://llm-resume-colindharringtons-projects.vercel.app/](https://llm-resume-colindharringtons-projects.vercel.app/)
+🌐 **Live Demo**: [https://www.threejsllm.online/](https://www.threejsllm.online/)
 
 ## 🎯 What It Does
 
