@@ -137,4 +137,4 @@ The application is designed to handle multiple concurrent users:
 For questions, issues, or contributions:
 
 - Open an issue on GitHub
-- Check the live demo: [https://llm-resume-colindharringtons-projects.vercel.app/](https://llm-resume-colindharringtons-projects.vercel.app/)
+- Check the live demo: [https://www.threejsllm.online/](https://www.threejsllm.online/)
