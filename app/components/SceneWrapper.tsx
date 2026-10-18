@@ -4,6 +4,7 @@ import { useChat } from "ai/react";
 import Scene from "./Scene";
 import OverlayCube from "./OverlayCube";
 import { useEffect, useState, useCallback, useRef } from "react";
+import { devLog } from "./devLog";
 
 // Define the possible states of our sequence
 type SequenceState =
@@ -30,7 +31,7 @@ export default function SceneWrapper() {
     api: "/api/chat",
     onFinish: (message) => {
       const now = Date.now();
-      console.log("[SceneWrapper] LLM Stream Finished:", {
+      devLog("[SceneWrapper] LLM Stream Finished:", {
         messageId: message.id,
         contentLength: message.content.length,
         role: message.role,
@@ -45,14 +46,14 @@ export default function SceneWrapper() {
 
       // If camera movement is already complete, start text rendering
       if (cameraMovementCompleteRef.current) {
-        console.log(
+        devLog(
           "[SceneWrapper] Camera movement already complete, starting text render"
         );
         setLastCompleteContent(message.content);
         setSequenceState("text_rendering");
         lastStateChangeTimeRef.current = now;
       } else {
-        console.log("[SceneWrapper] Waiting for camera movement to complete");
+        devLog("[SceneWrapper] Waiting for camera movement to complete");
       }
     },
     onResponse: (response) => {
@@ -61,7 +62,7 @@ export default function SceneWrapper() {
       llmCompleteRef.current = false;
       cameraMovementCompleteRef.current = false;
 
-      console.log("[SceneWrapper] LLM Stream Started:", {
+      devLog("[SceneWrapper] LLM Stream Started:", {
         status: response.status,
         headers: response.headers,
         currentState: sequenceState,
@@ -97,7 +98,7 @@ export default function SceneWrapper() {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.id !== lastMessageId) {
         const now = Date.now();
-        console.log("[SceneWrapper] New Message Detected:", {
+        devLog("[SceneWrapper] New Message Detected:", {
           oldId: lastMessageId,
           newId: lastMessage.id,
           role: lastMessage.role,
@@ -115,7 +116,7 @@ export default function SceneWrapper() {
   useEffect(() => {
     const handleCameraMovementComplete = () => {
       const now = Date.now();
-      console.log("[SceneWrapper] Camera Movement Complete:", {
+      devLog("[SceneWrapper] Camera Movement Complete:", {
         currentState: sequenceState,
         hasPendingContent: !!pendingContent,
         llmComplete: llmCompleteRef.current,
@@ -126,12 +127,12 @@ export default function SceneWrapper() {
 
       // If we have pending content, start text rendering
       if (pendingContent) {
-        console.log("[SceneWrapper] Starting text render with pending content");
+        devLog("[SceneWrapper] Starting text render with pending content");
         setLastCompleteContent(pendingContent);
         setSequenceState("text_rendering");
         lastStateChangeTimeRef.current = now;
       } else {
-        console.log("[SceneWrapper] Waiting for LLM to complete");
+        devLog("[SceneWrapper] Waiting for LLM to complete");
       }
     };
 
@@ -151,13 +152,13 @@ export default function SceneWrapper() {
   useEffect(() => {
     const handleTextRenderComplete = () => {
       const now = Date.now();
-      console.log("[SceneWrapper] Text Render Complete:", {
+      devLog("[SceneWrapper] Text Render Complete:", {
         currentState: sequenceState,
         timestamp: new Date().toISOString(),
       });
 
       if (sequenceState === "text_rendering") {
-        console.log("[SceneWrapper] Transitioning to complete state");
+        devLog("[SceneWrapper] Transitioning to complete state");
         setSequenceState("complete");
         lastStateChangeTimeRef.current = now;
       }
@@ -177,7 +178,7 @@ export default function SceneWrapper() {
   const wrappedHandleSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       const now = Date.now();
-      console.log("[SceneWrapper] Form Submitted:", {
+      devLog("[SceneWrapper] Form Submitted:", {
         currentState: sequenceState,
         timestamp: new Date().toISOString(),
       });

@@ -10,13 +10,15 @@ import { OutlinePass } from "three/examples/jsm/postprocessing/OutlinePass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { VignetteShader } from "three/examples/jsm/shaders/VignetteShader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { motion, AnimatePresence } from "framer-motion";
 import { UseChatHelpers } from "ai/react";
+import { devLog } from "./devLog";
 
 // Pre-create reusable vectors and objects to avoid garbage collection
 const HALF_PI = Math.PI / 2;
-const TEMP_VECTOR2 = new THREE.Vector2();
 const TEMP_SPHERICAL = new THREE.Spherical();
+const ZERO_VECTOR = new THREE.Vector3();
 
 // Cache common values
 const MAX_ANGLE_CHANGE = HALF_PI / 2;
@@ -26,9 +28,34 @@ const MAX_RADIUS = 2;
 const MIN_PHI = Math.PI / 6;
 const MAX_PHI = (5 * Math.PI) / 6;
 const MAX_DRIFT_SPEED = 0.0005;
-const ANIMATION_SPEED = 0.003;
+const CAMERA_MOVE_DURATION = 5550; // ms - matches the old 333-frame move at 60fps
+const FRAME_MS = 1000 / 60; // Drift tuning was written per 60fps frame
+const MAX_FRAME_DELTA = 100; // ms - avoid jumps after the tab was hidden
+const DRIFT_STOP_SPEED_SQ = 1e-14;
 const RESIZE_DEBOUNCE = 250;
 const BLOOM_RESOLUTION = 2;
+const MAX_PIXEL_RATIO = 1.5;
+
+// Per-frame lerp factor scaled to the actual frame duration
+const frameAlpha = (alpha: number, frameScale: number) =>
+  1 - Math.pow(1 - alpha, frameScale);
+
+// Free GPU memory for every mesh, material and texture under an object
+const disposeObject = (root: THREE.Object3D) => {
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    object.geometry.dispose();
+    const materials = Array.isArray(object.material)
+      ? object.material
+      : [object.material];
+    for (const material of materials) {
+      for (const value of Object.values(material)) {
+        if (value instanceof THREE.Texture) value.dispose();
+      }
+      material.dispose();
+    }
+  });
+};
 
 // Function to generate random position near current position
 const getRandomPosition = (
@@ -87,16 +114,12 @@ const styles = `
   }
 `;
 
-// Utility to split message into words and spaces
-const splitWordsAndSpaces = (text: string) => text.split(/(\s+)/);
-
 interface SceneProps {
   chatProps: UseChatHelpers;
 }
 
 function Scene({ chatProps }: SceneProps) {
   const {
-    messages,
     input,
     handleInputChange,
     handleSubmit: handleChatSubmit,
@@ -117,10 +140,6 @@ function Scene({ chatProps }: SceneProps) {
   const [hasStarted, setHasStarted] = useState(false);
   const [canInput, setCanInput] = useState(true);
   const [hasInteracted, setHasInteracted] = useState(false);
-  const [displayedWords, setDisplayedWords] = useState<string[]>([]);
-  const [buffer, setBuffer] = useState<string[]>([]);
-  const prevMsgId = useRef<string | null>(null);
-  const fadeInterval = useRef<NodeJS.Timeout | null>(null);
   const chromaticPassRef = useRef<ShaderPass | null>(null);
   const driftStartTimeRef = useRef(0);
 
@@ -135,17 +154,8 @@ function Scene({ chatProps }: SceneProps) {
   // Animation state
   const animationProgressRef = useRef(0);
   const isAnimatingRef = useRef(false);
-  const isTransitioningRef = useRef(false);
 
-  const chatBoxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-scroll chat to bottom on new message
-  useEffect(() => {
-    if (chatBoxRef.current) {
-      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
-    }
-  }, [messages]);
 
   // Auto-focus input when canInput becomes true after interaction
   useEffect(() => {
@@ -154,50 +164,10 @@ function Scene({ chatProps }: SceneProps) {
     }
   }, [canInput, hasInteracted]);
 
-  useEffect(() => {
-    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-    if (lastMsg && lastMsg.role === "assistant" && isChatLoading) {
-      const words = splitWordsAndSpaces(lastMsg.content);
-      // If new message, reset
-      if (prevMsgId.current !== lastMsg.id) {
-        setDisplayedWords([]);
-        setBuffer(words);
-        prevMsgId.current = lastMsg.id;
-      } else {
-        // Add new words to buffer
-        if (words.length > displayedWords.length + buffer.length) {
-          setBuffer(words.slice(displayedWords.length + buffer.length));
-        }
-      }
-    } else {
-      setDisplayedWords([]);
-      setBuffer([]);
-      prevMsgId.current = null;
-      if (fadeInterval.current) clearInterval(fadeInterval.current);
-    }
-  }, [messages, isChatLoading]);
-
-  // Release words from buffer at a steady pace
-  useEffect(() => {
-    if (buffer.length > 0) {
-      if (fadeInterval.current) clearInterval(fadeInterval.current);
-      fadeInterval.current = setInterval(() => {
-        setDisplayedWords((words) => [...words, buffer[0]]);
-        setBuffer((buf) => buf.slice(1));
-      }, 20); // Even faster word release
-      return () => {
-        if (fadeInterval.current) clearInterval(fadeInterval.current);
-      };
-    } else {
-      if (fadeInterval.current) clearInterval(fadeInterval.current);
-      return () => {};
-    }
-  }, [buffer]);
-
   // Listen for text render complete event
   useEffect(() => {
     const startDrifting = () => {
-      console.log("Text render complete, enabling input and starting drift");
+      devLog("Text render complete, enabling input and starting drift");
       if (cameraRef.current) {
         isDriftingRef.current = true;
         driftStartTimeRef.current = performance.now();
@@ -250,17 +220,12 @@ function Scene({ chatProps }: SceneProps) {
   const handleFormSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
-      if (
-        !cameraRef.current ||
-        !controlsRef.current ||
-        isAnimatingRef.current ||
-        isChatLoading
-      )
-        return;
+      // A camera move already in progress (e.g. the first-click intro) is
+      // simply restarted from the current position, so don't block on it
+      if (!cameraRef.current || !controlsRef.current || isChatLoading) return;
 
       try {
-        const now = Date.now();
-        console.log("[Scene] Form submitted, starting sequence", {
+        devLog("[Scene] Form submitted, starting sequence", {
           timestamp: new Date().toISOString(),
           currentPosition: cameraRef.current.position.toArray(),
           isAnimating: isAnimatingRef.current,
@@ -279,7 +244,6 @@ function Scene({ chatProps }: SceneProps) {
 
         animationProgressRef.current = 0;
         isAnimatingRef.current = true;
-        isTransitioningRef.current = true;
 
         // Start camera movement before submitting chat
         await handleChatSubmit(e);
@@ -290,25 +254,6 @@ function Scene({ chatProps }: SceneProps) {
           inputRef.current.focus();
         }
         setHasInteracted(true);
-
-        // Wait for camera movement to complete
-        const handleCameraMovementComplete = () => {
-          const completeTime = Date.now();
-          console.log("[Scene] Camera movement complete event received", {
-            timestamp: new Date().toISOString(),
-            timeSinceSubmit: `${completeTime - now}ms`,
-            finalPosition: cameraRef.current?.position.toArray(),
-            animationProgress: animationProgressRef.current,
-          });
-          window.removeEventListener(
-            "cameraMovementComplete",
-            handleCameraMovementComplete
-          );
-        };
-        window.addEventListener(
-          "cameraMovementComplete",
-          handleCameraMovementComplete
-        );
       } catch (error) {
         console.error("[Scene] Error submitting form:", {
           error,
@@ -322,6 +267,8 @@ function Scene({ chatProps }: SceneProps) {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const container = containerRef.current;
+    let disposed = false;
 
     // Scene setup
     const scene = new THREE.Scene();
@@ -338,23 +285,22 @@ function Scene({ chatProps }: SceneProps) {
     camera.position.copy(targetPositionRef.current);
     cameraRef.current = camera;
 
-    // Renderer with optimized settings
+    // Renderer with optimized settings. Antialiasing is off because everything
+    // is drawn through the EffectComposer's render targets, so MSAA on the
+    // canvas itself only ever smooths a fullscreen quad.
     const renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: false,
       powerPreference: "high-performance",
-      precision: "highp",
       stencil: false,
       depth: true,
       alpha: false,
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = false;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
-    containerRef.current.appendChild(renderer.domElement);
+    container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
     // Post-processing setup with optimized settings
@@ -364,26 +310,28 @@ function Scene({ chatProps }: SceneProps) {
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
-    // Optimized bloom pass with reduced resolution
     const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2),
-      0.5,
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      1,
       0.8,
-      0.85
+      0.15
     );
-    bloomPass.threshold = 0.15;
-    bloomPass.strength = 1;
-    bloomPass.radius = 0.8;
-    bloomPass.enabled = true;
     composer.addPass(bloomPass);
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0x111111, 0.4);
-    scene.add(ambientLight);
+    // EffectComposer resizes every pass to full resolution (addPass/setSize),
+    // so bloom has to be scaled back down explicitly each time
+    const sizeBloom = () => {
+      const pixelRatio = renderer.getPixelRatio();
+      bloomPass.setSize(
+        (window.innerWidth * pixelRatio) / BLOOM_RESOLUTION,
+        (window.innerHeight * pixelRatio) / BLOOM_RESOLUTION
+      );
+    };
+    sizeBloom();
 
-    // White ambient fill light
-    const whiteAmbient = new THREE.AmbientLight(0xffffff, 0.7);
-    scene.add(whiteAmbient);
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambientLight);
 
     // Main light
     const mainLight = new THREE.PointLight(0x00ffff, 15.0); // Cyan light
@@ -411,12 +359,26 @@ function Scene({ chatProps }: SceneProps) {
     controls.target.set(0, 0, 0);
     controls.update();
 
-    // Optimize model loading
+    // Only draw a frame when something on screen changed
+    let needsRender = true;
+
+    // Model is pre-merged and meshopt-compressed from the original Sketchfab
+    // export (89MB, 892 meshes) with:
+    //   npx @gltf-transform/cli optimize scene.gltf brain.glb \
+    //     --compress meshopt --texture-compress false --join true --simplify true
     const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
     loader.load(
-      "/3d/brain/scene.gltf",
+      "/3d/brain/brain.glb",
       (gltf) => {
         const model = gltf.scene;
+
+        // Effect was cleaned up while loading (e.g. React StrictMode remount)
+        if (disposed) {
+          disposeObject(model);
+          return;
+        }
+
         model.scale.setScalar(15);
 
         // Use existing vector for center calculation
@@ -424,23 +386,16 @@ function Scene({ chatProps }: SceneProps) {
         box.getCenter(tempVector.current);
         model.position.sub(tempVector.current);
 
-        // Optimize model materials
         model.traverse((object) => {
-          if (object instanceof THREE.Mesh) {
-            // Optimize geometry
-            object.geometry.computeBoundingSphere();
-            object.geometry.computeBoundingBox();
-
-            // Optimize materials
-            if (object.material instanceof THREE.MeshStandardMaterial) {
-              object.material.side = THREE.FrontSide;
-              object.material.flatShading = true;
-              object.material.needsUpdate = true;
-              // Optimize material settings
-              object.material.roughness = 0.1;
-              object.material.metalness = 0.3;
-              object.material.envMapIntensity = 2.0;
-            }
+          if (
+            object instanceof THREE.Mesh &&
+            object.material instanceof THREE.MeshStandardMaterial
+          ) {
+            object.material.side = THREE.FrontSide;
+            object.material.flatShading = true;
+            object.material.roughness = 0.1;
+            object.material.metalness = 0.3;
+            object.material.needsUpdate = true;
           }
         });
 
@@ -448,7 +403,7 @@ function Scene({ chatProps }: SceneProps) {
 
         // Add outline with optimized settings
         const outlinePass = new OutlinePass(
-          new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2),
+          new THREE.Vector2(window.innerWidth, window.innerHeight),
           scene,
           camera
         );
@@ -496,20 +451,26 @@ function Scene({ chatProps }: SceneProps) {
               vec4 cr = texture2D(tDiffuse, vUv + rOffset);
               vec4 cg = texture2D(tDiffuse, vUv + gOffset);
               vec4 cb = texture2D(tDiffuse, vUv + bOffset);
-              
+
               vec4 chromatic = vec4(
                 0.0,
                 (cb.g + cb.b) * 0.7,
                 cb.b,
                 cg.a
               );
-              
+
               gl_FragColor = mix(cg, chromatic, opacity * 0.3);
             }
           `,
         });
+        // Only enabled while the camera is moving (opacity > 0)
+        chromaticAberrationPass.enabled = false;
         composer.addPass(chromaticAberrationPass);
         chromaticPassRef.current = chromaticAberrationPass;
+
+        // addPass resized bloom back to full resolution
+        sizeBloom();
+        needsRender = true;
 
         setIsModelLoaded(true);
         setIsLoading(false);
@@ -522,13 +483,22 @@ function Scene({ chatProps }: SceneProps) {
     );
 
     // Animation
-    let running = true;
+    let animationId = 0;
+    let lastTime: number | null = null;
 
     const animate = (currentTime: number) => {
-      if (!running) return;
+      animationId = requestAnimationFrame(animate);
+
+      const delta =
+        lastTime === null
+          ? FRAME_MS
+          : Math.min(currentTime - lastTime, MAX_FRAME_DELTA);
+      lastTime = currentTime;
+      const frameScale = delta / FRAME_MS;
 
       if (isAnimatingRef.current && cameraRef.current) {
-        animationProgressRef.current += ANIMATION_SPEED;
+        needsRender = true;
+        animationProgressRef.current += delta / CAMERA_MOVE_DURATION;
 
         if (animationProgressRef.current >= 1) {
           isAnimatingRef.current = false;
@@ -536,15 +506,10 @@ function Scene({ chatProps }: SceneProps) {
           // Ensure camera is exactly at target position
           cameraRef.current.position.copy(targetPositionRef.current);
           // Always dispatch camera movement complete when animation is done
-          const now = Date.now();
-          console.log(
-            "[Scene] Camera movement truly complete, dispatching event",
-            {
-              finalPosition: cameraRef.current.position.toArray(),
-              timestamp: new Date().toISOString(),
-              animationDuration: `${now - driftStartTimeRef.current}ms`,
-            }
-          );
+          devLog("[Scene] Camera movement truly complete, dispatching event", {
+            finalPosition: cameraRef.current.position.toArray(),
+            timestamp: new Date().toISOString(),
+          });
           window.dispatchEvent(new CustomEvent("cameraMovementComplete"));
         }
 
@@ -563,8 +528,10 @@ function Scene({ chatProps }: SceneProps) {
             1.0 - fadeOutProgress * fadeOutProgress * fadeOutProgress;
         }
 
-        if (chromaticPassRef.current?.uniforms?.opacity) {
-          chromaticPassRef.current.uniforms.opacity.value = chromaticOpacity;
+        const chromaticPass = chromaticPassRef.current;
+        if (chromaticPass) {
+          chromaticPass.uniforms.opacity.value = chromaticOpacity;
+          chromaticPass.enabled = chromaticOpacity > 0;
         }
 
         cameraRef.current.position.lerpVectors(
@@ -573,24 +540,36 @@ function Scene({ chatProps }: SceneProps) {
           easedProgress
         );
       } else if (isDriftingRef.current && cameraRef.current) {
+        needsRender = true;
         const driftTime = (currentTime - driftStartTimeRef.current) / 1000;
         const driftProgress = Math.min(driftTime / 1.0, 1);
         const easeInDrift = driftProgress * driftProgress * driftProgress;
 
         targetDriftVelocityRef.current.clampLength(0, MAX_DRIFT_SPEED);
 
-        const previousPosition = cameraRef.current.position.clone();
-
         if (driftTime > 10) {
-          driftVelocityRef.current.lerp(new THREE.Vector3(0, 0, 0), 0.01);
+          driftVelocityRef.current.lerp(
+            ZERO_VECTOR,
+            frameAlpha(0.01, frameScale)
+          );
+          // Drift has died out - stop and let the render loop go idle
+          if (driftVelocityRef.current.lengthSq() < DRIFT_STOP_SPEED_SQ) {
+            driftVelocityRef.current.set(0, 0, 0);
+            isDriftingRef.current = false;
+          }
         } else {
           driftVelocityRef.current.lerp(
             targetDriftVelocityRef.current,
-            easeInDrift * 0.1
+            frameAlpha(easeInDrift * 0.1, frameScale)
           );
         }
 
-        cameraRef.current.position.add(driftVelocityRef.current);
+        // tempVector holds the pre-move position for the correction below
+        tempVector.current.copy(cameraRef.current.position);
+        cameraRef.current.position.addScaledVector(
+          driftVelocityRef.current,
+          frameScale
+        );
 
         const distanceFromCenter = cameraRef.current.position.length();
         if (distanceFromCenter > 2.5 || distanceFromCenter < 0.5) {
@@ -602,11 +581,11 @@ function Scene({ chatProps }: SceneProps) {
           const correctionStrength = distanceFromCenter > 2.5 ? 0.05 : 0.02;
           cameraRef.current.position.lerp(
             idealPosition.current,
-            correctionStrength
+            frameAlpha(correctionStrength, frameScale)
           );
 
           const newDirection = idealPosition.current
-            .sub(previousPosition)
+            .sub(tempVector.current)
             .normalize();
 
           const currentSpeed = driftVelocityRef.current.length();
@@ -620,17 +599,15 @@ function Scene({ chatProps }: SceneProps) {
         }
       }
 
-      if (controlsRef.current) {
-        controlsRef.current.update();
-      }
-      composerRef.current?.render();
+      if (!needsRender) return;
+      needsRender = false;
 
-      requestAnimationFrame(animate);
+      controls.update();
+      composer.render();
     };
 
     // Start animation loop
-    running = true;
-    animate(0);
+    animationId = requestAnimationFrame(animate);
 
     // Optimized resize handler with debounce
     let resizeTimeout: NodeJS.Timeout;
@@ -638,18 +615,16 @@ function Scene({ chatProps }: SceneProps) {
       if (resizeTimeout) clearTimeout(resizeTimeout);
 
       resizeTimeout = setTimeout(() => {
-        if (!camera || !renderer || !composer) return;
-
         const width = window.innerWidth;
         const height = window.innerHeight;
-
-        TEMP_VECTOR2.set(width / BLOOM_RESOLUTION, height / BLOOM_RESOLUTION);
 
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
 
         renderer.setSize(width, height);
         composer.setSize(width, height);
+        sizeBloom();
+        needsRender = true;
       }, RESIZE_DEBOUNCE);
     };
 
@@ -657,23 +632,19 @@ function Scene({ chatProps }: SceneProps) {
 
     // Cleanup
     return () => {
-      running = false;
+      disposed = true;
+      cancelAnimationFrame(animationId);
+      clearTimeout(resizeTimeout);
       window.removeEventListener("resize", handleResize);
-      if (containerRef.current && renderer.domElement) {
-        containerRef.current.removeChild(renderer.domElement);
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
       }
 
       // Dispose of resources
-      renderer.dispose();
+      controls.dispose();
+      disposeObject(scene);
       composer.dispose();
-      scene.traverse((object) => {
-        if (object instanceof THREE.Mesh) {
-          object.geometry.dispose();
-          if (object.material instanceof THREE.Material) {
-            object.material.dispose();
-          }
-        }
-      });
+      renderer.dispose();
     };
   }, []);
 

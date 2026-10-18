@@ -14,7 +14,22 @@ interface OpenAIError {
   message?: string;
 }
 
+// Temporary: skip OpenAI and stream a fixed reply while testing locally
+const USE_MOCK_REPLY = true;
+const MOCK_REPLY = "this is a test reply";
+
 export async function POST(req: Request) {
+  if (USE_MOCK_REPLY) {
+    return new StreamingTextResponse(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(MOCK_REPLY));
+          controller.close();
+        },
+      })
+    );
+  }
+
   try {
     const { messages } = await req.json();
 
