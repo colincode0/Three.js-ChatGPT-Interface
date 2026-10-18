@@ -14,6 +14,7 @@ import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.j
 import { motion, AnimatePresence } from "framer-motion";
 import { UseChatHelpers } from "ai/react";
 import { devLog } from "./devLog";
+import { MAX_USER_MESSAGE_CHARS } from "@/lib/chatLimits";
 
 // Pre-create reusable vectors and objects to avoid garbage collection
 const HALF_PI = Math.PI / 2;
@@ -735,6 +736,7 @@ function Scene({ chatProps }: SceneProps) {
                     ref={inputRef}
                     className="bg-black/80 text-white px-4 py-3 rounded-lg border border-white/20 focus:outline-none focus:border-white/40 w-full pr-10 resize-none overflow-y-auto h-[83px] max-h-[83px] leading-normal text-base sm:text-lg align-top"
                     rows={2}
+                    maxLength={MAX_USER_MESSAGE_CHARS}
                     disabled={isChatLoading || !canInput}
                     placeholder={
                       !canInput && hasInteracted
